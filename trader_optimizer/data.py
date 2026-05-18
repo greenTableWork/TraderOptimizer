@@ -41,6 +41,17 @@ class BarWindow:
         return [bar.close for bar in self.bars]
 
 
+@dataclass(frozen=True)
+class DataProfile:
+    symbol: str
+    bar_size: str
+    what_to_show: str
+    use_rth: int
+    count: int
+    first_timestamp: str
+    last_timestamp: str
+
+
 def find_trader_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -131,6 +142,70 @@ def load_bars(
         db_path=db_path,
         bars=bars,
     )
+
+
+def available_profiles(db_path: Path, symbol: str | None = None) -> list[DataProfile]:
+    if not db_path.exists():
+        raise FileNotFoundError(f"SQLite DB not found: {db_path}")
+
+    params: list[object] = []
+    filter_sql = ""
+    if symbol is not None:
+        filter_sql = "WHERE symbol = ?"
+        params.append(symbol)
+
+    query = f"""
+        SELECT
+            symbol,
+            bar_size,
+            what_to_show,
+            use_rth,
+            COUNT(*) AS row_count,
+            MIN(bar_time_utc),
+            MAX(bar_time_utc)
+        FROM historical_bars
+        {filter_sql}
+        GROUP BY symbol, bar_size, what_to_show, use_rth
+        ORDER BY symbol, bar_size, what_to_show, use_rth
+    """
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [
+        DataProfile(
+            symbol=str(row[0]),
+            bar_size=str(row[1]),
+            what_to_show=str(row[2]),
+            use_rth=int(row[3]),
+            count=int(row[4]),
+            first_timestamp=str(row[5]),
+            last_timestamp=str(row[6]),
+        )
+        for row in rows
+    ]
+
+
+def choose_data_profile(
+    db_path: Path,
+    symbol: str,
+    preferred_bar_size: str | None = None,
+) -> DataProfile:
+    profiles = available_profiles(db_path, symbol)
+    if not profiles:
+        raise ValueError(f"No SQLite bars available for {symbol}")
+
+    preferred_sizes = [preferred_bar_size] if preferred_bar_size else []
+    preferred_sizes.extend(["1 min", "10 secs", "5 mins", "1 day"])
+
+    def score(profile: DataProfile) -> tuple[int, int, int]:
+        try:
+            size_rank = preferred_sizes.index(profile.bar_size)
+        except ValueError:
+            size_rank = len(preferred_sizes)
+        what_rank = 0 if profile.what_to_show == "TRADES" else 1
+        rth_rank = 0 if profile.use_rth == 1 else 1
+        return (size_rank, what_rank + rth_rank, -profile.count)
+
+    return sorted(profiles, key=score)[0]
 
 
 def split_train_validation(

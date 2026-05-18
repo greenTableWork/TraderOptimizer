@@ -90,6 +90,45 @@ scripts/run_tradercore_backtest.sh --skip-build -- \
 The local optimizer is fast and inspectable, but the C++ BackTester remains the
 source of truth for fills, ledger writing, and runtime behavior.
 
+## Optimize existing strategy configs
+
+To discover the checked-in backtesting and stock-stress configs and generate an
+optimized config for each one:
+
+```bash
+trader-optimizer optimize-existing \
+  --trader-root .. \
+  --trials 25 \
+  --max-bars 5000 \
+  --output-dir runs/batch_existing
+```
+
+The batch command writes one folder per strategy plus:
+
+- `runs/batch_existing/batch_summary.json`
+- `runs/batch_existing/batch_summary.csv`
+
+The current discovery path covers:
+
+- `TraderCore/configs/backtesting/**/*.json`
+- `TraderLab/configs/backtests/ibkr_stock_stress/*.json`
+
+It supports `ConstantStepOffset`, `MovingAverageCross`, `TechnicalSignal`, and
+`PortfolioAllocation` configs with local SQLite bars. Missing data or unsupported
+configs are recorded as skipped in the batch summary.
+
+## Notebook report
+
+The executed notebook report is:
+
+```text
+notebooks/TraderOptimizer_Batch_Results.ipynb
+```
+
+It loads `runs/batch_existing`, ranks generated configs by objective and return,
+shows strategy-family coverage, renders a compact return chart, and prints the
+best generated config JSON.
+
 ## Hyperparameters
 
 Optuna currently tunes:

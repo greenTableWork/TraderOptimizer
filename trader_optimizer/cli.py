@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from trader_optimizer.data import default_market_db, find_trader_root, load_bars
+from trader_optimizer.batch import BatchSettings, optimize_candidates
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
+from trader_optimizer.strategy_configs import discover_strategy_candidates
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,6 +15,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "optimize":
         return optimize(args)
+    if args.command == "optimize-existing":
+        return optimize_existing(args)
     parser.print_help()
     return 2
 
@@ -72,6 +76,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optuna study name. Defaults to a timestamped name.",
     )
     optimize_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Reduce progress logging.",
+    )
+
+    existing_parser = subparsers.add_parser(
+        "optimize-existing",
+        help="Discover existing Trader backtest configs and optimize each one.",
+    )
+    existing_parser.add_argument(
+        "--trader-root",
+        type=Path,
+        default=None,
+        help="Trader workspace root. Defaults to auto-discovery from cwd.",
+    )
+    existing_parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="SQLite historical bars DB. Defaults to TraderLab/Data/tws_historical.sqlite.",
+    )
+    existing_parser.add_argument(
+        "--config-glob",
+        action="append",
+        default=None,
+        help=(
+            "Glob relative to trader root. May be repeated. Defaults to "
+            "TraderCore backtesting configs and TraderLab stock-stress configs."
+        ),
+    )
+    existing_parser.add_argument(
+        "--bar-size",
+        default=None,
+        help="Preferred bar size. If omitted, the optimizer auto-selects local data.",
+    )
+    existing_parser.add_argument("--trials", type=int, default=25)
+    existing_parser.add_argument("--max-bars", type=int, default=5000)
+    existing_parser.add_argument("--train-fraction", type=float, default=0.70)
+    existing_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Batch output directory. Defaults to runs/batch_<timestamp>.",
+    )
+    existing_parser.add_argument(
         "--quiet",
         action="store_true",
         help="Reduce progress logging.",
@@ -139,3 +188,43 @@ def optimize(args: argparse.Namespace) -> int:
         print(f"  summary_path: {artifacts.summary_path}")
         print(f"  study_db_path: {artifacts.study_db_path}")
     return 0
+
+
+def optimize_existing(args: argparse.Namespace) -> int:
+    trader_root = (args.trader_root or find_trader_root()).resolve()
+    db_path = (args.db or default_market_db(trader_root)).resolve()
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    output_dir = (
+        args.output_dir or Path.cwd() / "runs" / f"batch_{timestamp}"
+    ).resolve()
+    verbose = not args.quiet
+    candidates = discover_strategy_candidates(trader_root, args.config_glob)
+    if verbose:
+        print("TraderOptimizer batch starting")
+        print(f"  trader_root: {trader_root}")
+        print(f"  db: {db_path}")
+        print(f"  candidates: {len(candidates)}")
+        print(f"  trials_per_candidate: {args.trials}")
+        print(f"  max_bars: {args.max_bars}")
+        print(f"  output_dir: {output_dir}")
+    results = optimize_candidates(
+        candidates,
+        BatchSettings(
+            db_path=db_path,
+            output_dir=output_dir,
+            trials=args.trials,
+            max_bars=args.max_bars,
+            preferred_bar_size=args.bar_size,
+            train_fraction=args.train_fraction,
+            verbose=verbose,
+        ),
+    )
+    ok = sum(1 for result in results if result.status == "ok")
+    skipped = len(results) - ok
+    if verbose:
+        print("TraderOptimizer batch finished")
+        print(f"  optimized: {ok}")
+        print(f"  skipped: {skipped}")
+        print(f"  summary_json: {output_dir / 'batch_summary.json'}")
+        print(f"  summary_csv: {output_dir / 'batch_summary.csv'}")
+    return 0 if ok else 1
