@@ -1,0 +1,63 @@
+{
+  "strategy_type": "PortfolioAllocation",
+  "allocation_type": "PAIRS-001",
+  "portfolioNotional": 10000.0,
+  "maxGrossExposure": 1.8891687182280668,
+  "pairWindow": 100,
+  "pairEntryZ": 2.9972355345692177,
+  "pairExitZ": 0.556007159481932,
+  "contracts": [
+    {
+      "symbol": "GOOGL",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    },
+    {
+      "symbol": "GOOG",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    },
+    {
+      "symbol": "AMD",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    },
+    {
+      "symbol": "NVDA",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    },
+    {
+      "symbol": "AAPL",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    },
+    {
+      "symbol": "MSFT",
+      "secType": "STOCK",
+      "currency": "USD",
+      "exchange": "BACKTESTER"
+    }
+  ],
+  "pairs": [
+    {
+      "left": "GOOGL",
+      "right": "GOOG"
+    },
+    {
+      "left": "AMD",
+      "right": "NVDA"
+    },
+    {
+      "left": "AAPL",
+      "right": "MSFT"
+    }
+  ],
+  "ledgerPath": "data/TraderLedger/pairs001_equity_pairs_sqlite_OPTIMIZED.sqlite",
+  "ledgerContextCollection": "pairs001_equity_pairs_sqlite_OPTIMIZED_context"
+}

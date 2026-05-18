@@ -1,0 +1,22 @@
+{
+  "strategy_type": "TechnicalSignal",
+  "signal_type": "TS-004",
+  "openingRangeBars": 3,
+  "useAtrStop": false,
+  "orderQuantity": 20.0,
+  "contract": {
+    "symbol": "AAPL",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "AAPL",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/ts004_opening_range_breakout_aapl_sqlite_OPTIMIZED.sqlite",
+  "ledgerContextCollection": "ts004_opening_range_breakout_aapl_sqlite_OPTIMIZED_context",
+  "atrWindow": 5
+}

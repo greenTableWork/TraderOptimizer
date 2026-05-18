@@ -1,0 +1,144 @@
+{
+  "configs": [
+    {
+      "name": "moving_average_cross_aapl_tws_sqlite",
+      "strategy_type": "MovingAverageCross",
+      "variant": "MovingAverageCross",
+      "symbols": [
+        "AAPL"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/moving_average_cross_aapl_tws_sqlite.json",
+      "best_value": -0.22424106352543396,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/moving_average_cross_aapl_tws_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/moving_average_cross_aapl_tws_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/moving_average_cross_aapl_tws_sqlite/best_summary.json"
+    },
+    {
+      "name": "mw001_moving_average_cross_aapl_sqlite",
+      "strategy_type": "MovingAverageCross",
+      "variant": "MovingAverageCross",
+      "symbols": [
+        "AAPL"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/mw001_moving_average_cross_aapl_sqlite.json",
+      "best_value": -0.22427860072661657,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/mw001_moving_average_cross_aapl_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/mw001_moving_average_cross_aapl_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/mw001_moving_average_cross_aapl_sqlite/best_summary.json"
+    },
+    {
+      "name": "pairs001_equity_pairs_sqlite",
+      "strategy_type": "PortfolioAllocation",
+      "variant": "PAIRS-001",
+      "symbols": [
+        "GOOGL",
+        "GOOG",
+        "AMD",
+        "NVDA",
+        "AAPL",
+        "MSFT"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/pairs001_equity_pairs_sqlite.json",
+      "best_value": -0.008254567960761487,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/pairs001_equity_pairs_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/pairs001_equity_pairs_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/pairs001_equity_pairs_sqlite/best_summary.json"
+    },
+    {
+      "name": "qs001_volatility_targeting_top_stocks_sqlite",
+      "strategy_type": "PortfolioAllocation",
+      "variant": "QS-001",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "AMZN",
+        "AVGO",
+        "GOOG",
+        "GOOGL",
+        "META",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/qs001_volatility_targeting_top_stocks_sqlite.json",
+      "best_value": -0.006701315777824693,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/qs001_volatility_targeting_top_stocks_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/qs001_volatility_targeting_top_stocks_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/qs001_volatility_targeting_top_stocks_sqlite/best_summary.json"
+    },
+    {
+      "name": "qs002_momentum_factor_top_stocks_sqlite",
+      "strategy_type": "PortfolioAllocation",
+      "variant": "QS-002",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "AMZN",
+        "AVGO",
+        "GOOG",
+        "GOOGL",
+        "META",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/qs002_momentum_factor_top_stocks_sqlite.json",
+      "best_value": -0.0683949893029683,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/qs002_momentum_factor_top_stocks_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/qs002_momentum_factor_top_stocks_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/qs002_momentum_factor_top_stocks_sqlite/best_summary.json"
+    },
+    {
+      "name": "ts002_ema_cross_tsla_sqlite",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-002",
+      "symbols": [
+        "TSLA"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts002_ema_cross_tsla_sqlite.json",
+      "best_value": 0.0495119233913086,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/ts002_ema_cross_tsla_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts002_ema_cross_tsla_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts002_ema_cross_tsla_sqlite/best_summary.json"
+    },
+    {
+      "name": "ts003_bollinger_breakout_amd_sqlite",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-003",
+      "symbols": [
+        "AMD"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts003_bollinger_breakout_amd_sqlite.json",
+      "best_value": 0.06710386199043505,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/ts003_bollinger_breakout_amd_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts003_bollinger_breakout_amd_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts003_bollinger_breakout_amd_sqlite/best_summary.json"
+    },
+    {
+      "name": "ts004_opening_range_breakout_aapl_sqlite",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-004",
+      "symbols": [
+        "AAPL"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts004_opening_range_breakout_aapl_sqlite.json",
+      "best_value": -0.24034501064343974,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/ts004_opening_range_breakout_aapl_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts004_opening_range_breakout_aapl_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts004_opening_range_breakout_aapl_sqlite/best_summary.json"
+    },
+    {
+      "name": "ts005_rsi_divergence_goog_sqlite",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-005",
+      "symbols": [
+        "GOOG"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts005_rsi_divergence_goog_sqlite.json",
+      "best_value": -0.23688909729419835,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso/ts005_rsi_divergence_goog_sqlite.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts005_rsi_divergence_goog_sqlite/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing/ts005_rsi_divergence_goog_sqlite/best_summary.json"
+    }
+  ]
+}

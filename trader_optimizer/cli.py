@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from trader_optimizer.data import default_market_db, find_trader_root, load_bars
-from trader_optimizer.batch import BatchSettings, optimize_candidates
+from trader_optimizer.batch import (
+    BatchSettings,
+    optimize_candidates,
+    write_optimization_plan,
+)
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
 from trader_optimizer.strategy_configs import discover_strategy_candidates
 
@@ -111,6 +115,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Preferred bar size. If omitted, the optimizer auto-selects local data.",
     )
+    existing_parser.add_argument(
+        "--include-strategy-type",
+        action="append",
+        default=None,
+        help="Only optimize this strategy_type. May be repeated.",
+    )
+    existing_parser.add_argument(
+        "--exclude-strategy-type",
+        action="append",
+        default=None,
+        help="Skip this strategy_type. May be repeated.",
+    )
     existing_parser.add_argument("--trials", type=int, default=25)
     existing_parser.add_argument("--max-bars", type=int, default=5000)
     existing_parser.add_argument("--train-fraction", type=float, default=0.70)
@@ -119,6 +135,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Batch output directory. Defaults to runs/batch_<timestamp>.",
+    )
+    existing_parser.add_argument(
+        "--plan-path",
+        type=Path,
+        default=None,
+        help="Write a markdown optimization plan before running Optuna.",
+    )
+    existing_parser.add_argument(
+        "--export-config-dir",
+        type=Path,
+        default=None,
+        help="Copy every generated best_config.json into a stable directory.",
     )
     existing_parser.add_argument(
         "--quiet",
@@ -199,6 +227,11 @@ def optimize_existing(args: argparse.Namespace) -> int:
     ).resolve()
     verbose = not args.quiet
     candidates = discover_strategy_candidates(trader_root, args.config_glob)
+    candidates = _filter_candidates(
+        candidates,
+        include_types=args.include_strategy_type,
+        exclude_types=args.exclude_strategy_type,
+    )
     if verbose:
         print("TraderOptimizer batch starting")
         print(f"  trader_root: {trader_root}")
@@ -207,18 +240,33 @@ def optimize_existing(args: argparse.Namespace) -> int:
         print(f"  trials_per_candidate: {args.trials}")
         print(f"  max_bars: {args.max_bars}")
         print(f"  output_dir: {output_dir}")
-    results = optimize_candidates(
-        candidates,
-        BatchSettings(
-            db_path=db_path,
-            output_dir=output_dir,
-            trials=args.trials,
-            max_bars=args.max_bars,
-            preferred_bar_size=args.bar_size,
-            train_fraction=args.train_fraction,
-            verbose=verbose,
-        ),
+        if args.plan_path:
+            print(f"  plan_path: {args.plan_path.resolve()}")
+        if args.export_config_dir:
+            print(f"  export_config_dir: {args.export_config_dir.resolve()}")
+    settings = BatchSettings(
+        db_path=db_path,
+        output_dir=output_dir,
+        trials=args.trials,
+        max_bars=args.max_bars,
+        preferred_bar_size=args.bar_size,
+        train_fraction=args.train_fraction,
+        verbose=verbose,
     )
+    if args.export_config_dir:
+        settings = BatchSettings(
+            db_path=settings.db_path,
+            output_dir=settings.output_dir,
+            trials=settings.trials,
+            max_bars=settings.max_bars,
+            preferred_bar_size=settings.preferred_bar_size,
+            train_fraction=settings.train_fraction,
+            verbose=settings.verbose,
+            export_config_dir=args.export_config_dir.resolve(),
+        )
+    if args.plan_path:
+        write_optimization_plan(candidates, settings, args.plan_path.resolve())
+    results = optimize_candidates(candidates, settings)
     ok = sum(1 for result in results if result.status == "ok")
     skipped = len(results) - ok
     if verbose:
@@ -227,4 +275,24 @@ def optimize_existing(args: argparse.Namespace) -> int:
         print(f"  skipped: {skipped}")
         print(f"  summary_json: {output_dir / 'batch_summary.json'}")
         print(f"  summary_csv: {output_dir / 'batch_summary.csv'}")
+        if args.export_config_dir:
+            print(f"  exported_configs: {args.export_config_dir.resolve()}")
     return 0 if ok else 1
+
+
+def _filter_candidates(
+    candidates,
+    include_types: list[str] | None,
+    exclude_types: list[str] | None,
+):
+    include = {item.lower() for item in include_types or []}
+    exclude = {item.lower() for item in exclude_types or []}
+    output = []
+    for candidate in candidates:
+        strategy_type = candidate.strategy_type.lower()
+        if include and strategy_type not in include:
+            continue
+        if strategy_type in exclude:
+            continue
+        output.append(candidate)
+    return output

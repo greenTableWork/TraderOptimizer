@@ -1,0 +1,22 @@
+{
+  "strategy_type": "TechnicalSignal",
+  "signal_type": "TS-003",
+  "middleWindow": 44,
+  "trendWindow": 118,
+  "bandStddev": 1.8584007013745254,
+  "orderQuantity": 18.0,
+  "contract": {
+    "symbol": "AMD",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "AMD",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/ts003_bollinger_breakout_amd_sqlite_OPTIMIZED.sqlite",
+  "ledgerContextCollection": "ts003_bollinger_breakout_amd_sqlite_OPTIMIZED_context"
+}
