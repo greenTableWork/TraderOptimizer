@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trader-optimizer"
+version = "0.1.0"
+description = "Simple Optuna optimizer for TraderCore strategy configs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "optuna>=3.6,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+trader-optimizer = "trader_optimizer.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
