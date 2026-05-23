@@ -92,6 +92,28 @@ def ensure_optimizer_schema(conn) -> None:
     with conn.cursor() as cursor:
         cursor.execute(
             """
+            DO $$
+            BEGIN
+                CREATE DOMAIN trader_currency_code AS TEXT
+                    CHECK (VALUE ~ '^[A-Z][A-Z0-9_]{1,15}$');
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END
+            $$;
+
+            DO $$
+            BEGIN
+                CREATE DOMAIN trader_currency_amount AS NUMERIC(38, 12);
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END
+            $$;
+
+            DO $$
+            BEGIN
+                CREATE DOMAIN trader_position_quantity AS NUMERIC(38, 12);
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END
+            $$;
+
             CREATE TABLE IF NOT EXISTS optimizer_runs (
                 id BIGSERIAL PRIMARY KEY,
                 study_name TEXT NOT NULL,
@@ -133,9 +155,9 @@ def ensure_optimizer_schema(conn) -> None:
                 timestamp_utc TIMESTAMPTZ,
                 action TEXT NOT NULL DEFAULT '',
                 step BIGINT,
-                quantity DOUBLE PRECISION,
-                price DOUBLE PRECISION,
-                commission DOUBLE PRECISION,
+                quantity trader_position_quantity,
+                price trader_currency_amount,
+                commission trader_currency_amount,
                 PRIMARY KEY (run_id, fill_index)
             );
 
@@ -155,6 +177,14 @@ def ensure_optimizer_schema(conn) -> None:
                 reason TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+
+            ALTER TABLE optimizer_fills
+                ALTER COLUMN quantity TYPE trader_position_quantity
+                    USING quantity::numeric::trader_position_quantity,
+                ALTER COLUMN price TYPE trader_currency_amount
+                    USING price::numeric::trader_currency_amount,
+                ALTER COLUMN commission TYPE trader_currency_amount
+                    USING commission::numeric::trader_currency_amount;
             """
         )
     conn.commit()
