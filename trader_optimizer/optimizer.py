@@ -10,6 +10,13 @@ import optuna
 
 from trader_optimizer.config import build_constant_step_offset_config, write_json
 from trader_optimizer.data import Bar, BarWindow, split_train_validation
+from trader_optimizer.postgres import (
+    PostgresSettings,
+    insert_optimizer_fills,
+    insert_optimizer_run,
+    insert_optimizer_trials,
+    postgres_connection,
+)
 from trader_optimizer.simulator import (
     SimulationResult,
     StrategyParams,
@@ -23,7 +30,8 @@ class OptimizationSettings:
     train_fraction: float
     output_dir: Path
     study_name: str
-    storage_path: Path
+    storage_url: str
+    pg_settings: PostgresSettings
     min_trades: int
     verbose: bool
 
@@ -34,7 +42,7 @@ class OptimizationArtifacts:
     config_path: Path
     summary_path: Path
     trials_path: Path
-    study_db_path: Path
+    study_storage: str
     best_value: float
 
 
@@ -51,15 +59,14 @@ def run_optimization(
         print("Preparing Optuna study")
         print(f"  output_dir: {settings.output_dir}")
         print(f"  study_name: {settings.study_name}")
-        print(f"  storage: sqlite:///{settings.storage_path}")
+        print(f"  storage: {settings.storage_url}")
         print(f"  train bars: {len(train_bars)}")
         print(f"  validation bars: {len(validation_bars)}")
 
-    storage_url = f"sqlite:///{settings.storage_path}"
     study = optuna.create_study(
         direction="maximize",
         study_name=settings.study_name,
-        storage=storage_url,
+        storage=settings.storage_url,
         load_if_exists=True,
     )
 
@@ -81,6 +88,12 @@ def run_optimization(
     summary_path = settings.output_dir / "best_summary.json"
     trials_path = settings.output_dir / "trials.csv"
     fills_path = settings.output_dir / "fills.csv"
+    metrics = {
+        "train": train_result.to_dict(),
+        "validation": validation_result.to_dict(),
+        "all": all_result.to_dict(),
+    }
+    hyperparameters = dict(best_trial.params)
 
     write_json(config_path, config)
     write_json(
@@ -92,21 +105,39 @@ def run_optimization(
             "bar_size": window.bar_size,
             "what_to_show": window.what_to_show,
             "use_rth": window.use_rth,
-            "db_path": str(window.db_path),
+            "data_source": window.data_source,
             "first_timestamp": window.first_timestamp,
             "last_timestamp": window.last_timestamp,
             "bars": len(window.bars),
-            "hyperparameters": best_trial.params,
+            "hyperparameters": hyperparameters,
             "resolved_strategy_params": _strategy_params_dict(best_params),
-            "metrics": {
-                "train": train_result.to_dict(),
-                "validation": validation_result.to_dict(),
-                "all": all_result.to_dict(),
-            },
+            "metrics": metrics,
         },
     )
     _write_trials_csv(trials_path, study.trials)
     _write_fills_csv(fills_path, fills)
+    with postgres_connection(settings.pg_settings) as conn:
+        run_id = insert_optimizer_run(
+            conn,
+            study_name=settings.study_name,
+            run_kind="optimize",
+            symbol=window.symbol,
+            output_dir=settings.output_dir,
+            config_path=config_path,
+            summary_path=summary_path,
+            best_value=float(best_trial.value or 0.0),
+            data_source=window.data_source,
+            bar_size=window.bar_size,
+            what_to_show=window.what_to_show,
+            use_rth=window.use_rth,
+            first_timestamp=window.first_timestamp,
+            last_timestamp=window.last_timestamp,
+            bars=len(window.bars),
+            metrics=metrics,
+            hyperparameters=hyperparameters,
+        )
+        insert_optimizer_trials(conn, run_id, study.trials)
+        insert_optimizer_fills(conn, run_id, fills)
 
     if settings.verbose:
         print("Best trial")
@@ -120,13 +151,14 @@ def run_optimization(
         print(f"  summary: {summary_path}")
         print(f"  trials: {trials_path}")
         print(f"  fills: {fills_path}")
+        print("  pg_tables: optimizer_runs, optimizer_trials, optimizer_fills")
 
     return OptimizationArtifacts(
         output_dir=settings.output_dir,
         config_path=config_path,
         summary_path=summary_path,
         trials_path=trials_path,
-        study_db_path=settings.storage_path,
+        study_storage=settings.storage_url,
         best_value=float(best_trial.value or 0.0),
     )
 

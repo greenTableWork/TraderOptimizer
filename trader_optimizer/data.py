@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
+
+from trader_optimizer.postgres import PostgresSettings, postgres_connection
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class BarWindow:
     bar_size: str
     what_to_show: str
     use_rth: int
-    db_path: Path
+    data_source: str
     bars: list[Bar]
 
     @property
@@ -62,12 +63,8 @@ def find_trader_root(start: Path | None = None) -> Path:
     )
 
 
-def default_market_db(trader_root: Path) -> Path:
-    return trader_root / "TraderLab" / "Data" / "tws_historical.sqlite"
-
-
 def load_bars(
-    db_path: Path,
+    pg_settings: PostgresSettings,
     symbol: str,
     bar_size: str,
     what_to_show: str,
@@ -76,46 +73,56 @@ def load_bars(
     end_utc: str | None = None,
     max_bars: int = 50000,
 ) -> BarWindow:
-    if not db_path.exists():
-        raise FileNotFoundError(f"SQLite DB not found: {db_path}")
-
     filters = [
-        "symbol = ?",
-        "bar_size = ?",
-        "what_to_show = ?",
-        "use_rth = ?",
+        "symbol = %s",
+        "bar_size = %s",
+        "what_to_show = %s",
+        "use_rth = %s",
     ]
-    params: list[object] = [symbol, bar_size, what_to_show, use_rth]
+    params: list[object] = [symbol, bar_size, what_to_show, bool(use_rth)]
     if start_utc:
-        filters.append("bar_time_utc >= ?")
+        filters.append("bar_time_utc >= %s::timestamptz")
         params.append(start_utc)
     if end_utc:
-        filters.append("bar_time_utc <= ?")
+        filters.append("bar_time_utc <= %s::timestamptz")
         params.append(end_utc)
 
     where_clause = " AND ".join(filters)
     if max_bars > 0:
         query = f"""
             SELECT bar_time_utc, open, high, low, close
-            FROM historical_bars
-            WHERE {where_clause}
-            ORDER BY bar_time_utc DESC
-            LIMIT ?
+            FROM (
+                SELECT
+                    to_char(bar_time_utc AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"') AS bar_time_utc,
+                    open,
+                    high,
+                    low,
+                    close
+                FROM historical_bars
+                WHERE {where_clause}
+                ORDER BY bar_time_utc DESC
+                LIMIT %s
+            ) recent_bars
+            ORDER BY bar_time_utc ASC
         """
         params.append(max_bars)
     else:
         query = f"""
-            SELECT bar_time_utc, open, high, low, close
+            SELECT
+                to_char(bar_time_utc AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"') AS bar_time_utc,
+                open,
+                high,
+                low,
+                close
             FROM historical_bars
             WHERE {where_clause}
             ORDER BY bar_time_utc ASC
         """
 
-    with sqlite3.connect(db_path) as connection:
-        rows = connection.execute(query, params).fetchall()
-
-    if max_bars > 0:
-        rows = list(reversed(rows))
+    with postgres_connection(pg_settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
 
     bars = [
         Bar(
@@ -139,19 +146,19 @@ def load_bars(
         bar_size=bar_size,
         what_to_show=what_to_show,
         use_rth=use_rth,
-        db_path=db_path,
+        data_source=pg_settings.display,
         bars=bars,
     )
 
 
-def available_profiles(db_path: Path, symbol: str | None = None) -> list[DataProfile]:
-    if not db_path.exists():
-        raise FileNotFoundError(f"SQLite DB not found: {db_path}")
-
+def available_profiles(
+    pg_settings: PostgresSettings,
+    symbol: str | None = None,
+) -> list[DataProfile]:
     params: list[object] = []
     filter_sql = ""
     if symbol is not None:
-        filter_sql = "WHERE symbol = ?"
+        filter_sql = "WHERE symbol = %s"
         params.append(symbol)
 
     query = f"""
@@ -168,14 +175,16 @@ def available_profiles(db_path: Path, symbol: str | None = None) -> list[DataPro
         GROUP BY symbol, bar_size, what_to_show, use_rth
         ORDER BY symbol, bar_size, what_to_show, use_rth
     """
-    with sqlite3.connect(db_path) as connection:
-        rows = connection.execute(query, params).fetchall()
+    with postgres_connection(pg_settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
     return [
         DataProfile(
             symbol=str(row[0]),
             bar_size=str(row[1]),
             what_to_show=str(row[2]),
-            use_rth=int(row[3]),
+            use_rth=1 if row[3] else 0,
             count=int(row[4]),
             first_timestamp=str(row[5]),
             last_timestamp=str(row[6]),
@@ -185,13 +194,13 @@ def available_profiles(db_path: Path, symbol: str | None = None) -> list[DataPro
 
 
 def choose_data_profile(
-    db_path: Path,
+    pg_settings: PostgresSettings,
     symbol: str,
     preferred_bar_size: str | None = None,
 ) -> DataProfile:
-    profiles = available_profiles(db_path, symbol)
+    profiles = available_profiles(pg_settings, symbol)
     if not profiles:
-        raise ValueError(f"No SQLite bars available for {symbol}")
+        raise ValueError(f"No PostgreSQL bars available for {symbol}")
 
     preferred_sizes = [preferred_bar_size] if preferred_bar_size else []
     preferred_sizes.extend(["1 min", "10 secs", "5 mins", "1 day"])

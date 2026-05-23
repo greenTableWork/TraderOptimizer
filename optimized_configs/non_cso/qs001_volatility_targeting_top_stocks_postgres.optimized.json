@@ -1,10 +1,10 @@
 {
   "strategy_type": "PortfolioAllocation",
-  "allocation_type": "QS-002",
+  "allocation_type": "QS-001",
   "portfolioNotional": 10000.0,
-  "maxGrossExposure": 0.26394414080331147,
-  "momentumLookback": 80,
-  "momentumLegSize": 5,
+  "targetVolatility": 0.04972755630014483,
+  "maxGrossExposure": 0.2508407104412294,
+  "volatilityWindow": 19,
   "contracts": [
     {
       "symbol": "AAPL",
@@ -67,6 +67,6 @@
       "exchange": "BACKTESTER"
     }
   ],
-  "ledgerPath": "data/TraderLedger/qs002_momentum_factor_top_stocks_sqlite_OPTIMIZED.sqlite",
-  "ledgerContextCollection": "qs002_momentum_factor_top_stocks_sqlite_OPTIMIZED_context"
+  "ledgerPath": "data/TraderLedger/qs001_volatility_targeting_top_stocks_postgres_OPTIMIZED",
+  "ledgerContextCollection": "qs001_volatility_targeting_top_stocks_postgres_OPTIMIZED_context"
 }

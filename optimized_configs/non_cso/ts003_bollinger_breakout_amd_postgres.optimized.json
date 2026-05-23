@@ -17,6 +17,6 @@
     "currency": "USD",
     "exchange": "BACKTESTER"
   },
-  "ledgerPath": "data/TraderLedger/ts003_bollinger_breakout_amd_sqlite_OPTIMIZED.sqlite",
-  "ledgerContextCollection": "ts003_bollinger_breakout_amd_sqlite_OPTIMIZED_context"
+  "ledgerPath": "data/TraderLedger/ts003_bollinger_breakout_amd_postgres_OPTIMIZED",
+  "ledgerContextCollection": "ts003_bollinger_breakout_amd_postgres_OPTIMIZED_context"
 }

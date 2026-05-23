@@ -3,13 +3,14 @@
 TraderOptimizer is a small, verbose Optuna training loop for producing
 TraderCore-style strategy config JSON.
 
-The optimizer reads `TraderLab/Data/tws_historical.sqlite`, tries strategy
+The optimizer reads `public.historical_bars` from PostgreSQL, tries strategy
 hyperparameters with Optuna, runs a simple local simulator, and writes:
 
 - `best_config.json`: a TraderCore-compatible strategy config.
 - `best_summary.json`: the best trial, metrics, and data window.
-- `trials.csv`: every Optuna trial and its metrics.
-- `optuna-study.db`: the Optuna SQLite study.
+- `optimizer_runs`, `optimizer_trials`, and `optimizer_fills` rows in PostgreSQL.
+- Optuna study tables in PostgreSQL.
+- CSV/JSON artifacts for review next to each run.
 
 This is intentionally simple. Use it to search parameter ranges quickly, then
 validate promising configs with the real TraderCore `BackTester`.
@@ -38,8 +39,12 @@ trader-optimizer optimize \
 The command is verbose by default. It prints the data source, bar window, Optuna
 study path, best score, best config path, and train/validation metrics.
 
-Use `--max-bars 0` if you want to run against the full matching SQLite series.
+Use `--max-bars 0` if you want to run against the full matching PostgreSQL series.
 That can be much slower for the two-year `10 secs` scrape.
+Use `--pg-host`, `--pg-port`, `--pg-database`, `--pg-user`, and
+`--pg-password` to override the default local `trader` database. You can also
+pass `--pg-conninfo`; when doing that, pass `--optuna-storage-url` too because
+Optuna needs a SQLAlchemy PostgreSQL URL.
 
 ## Output config
 
@@ -66,7 +71,7 @@ The generated config uses the same core fields as TraderCore CSO configs:
     "currency": "USD",
     "exchange": "BACKTESTER"
   },
-  "ledgerPath": "data/TraderLedger/CSO_AAPL_OPTIMIZED.sqlite",
+  "ledgerPath": "data/TraderLedger/CSO_AAPL_OPTIMIZED",
   "ledgerContextCollection": "CSO_AAPL_OPTIMIZED_context"
 }
 ```
@@ -78,7 +83,7 @@ After optimization, run the generated config through the real BackTester:
 ```bash
 cd ../TraderLab
 scripts/run_tradercore_backtest.sh --skip-build -- \
-  --sqlite-data Data/tws_historical.sqlite \
+  --pg-database trader \
   --strategy-config /absolute/path/to/TraderOptimizer/runs/.../best_config.json \
   --bar-size "10 secs" \
   --what-to-show TRADES \
@@ -107,6 +112,7 @@ The batch command writes one folder per strategy plus:
 
 - `runs/batch_existing/batch_summary.json`
 - `runs/batch_existing/batch_summary.csv`
+- `optimizer_batch_results` rows in PostgreSQL
 
 The current discovery path covers:
 
@@ -114,7 +120,7 @@ The current discovery path covers:
 - `TraderLab/configs/backtests/ibkr_stock_stress/*.json`
 
 It supports `ConstantStepOffset`, `MovingAverageCross`, `TechnicalSignal`, and
-`PortfolioAllocation` configs with local SQLite bars. Missing data or unsupported
+`PortfolioAllocation` configs with PostgreSQL bars. Missing data or unsupported
 configs are recorded as skipped in the batch summary.
 
 To focus only on the new non-CSO strategy suite:

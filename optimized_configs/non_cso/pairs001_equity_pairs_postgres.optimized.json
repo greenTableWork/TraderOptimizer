@@ -58,6 +58,6 @@
       "right": "MSFT"
     }
   ],
-  "ledgerPath": "data/TraderLedger/pairs001_equity_pairs_sqlite_OPTIMIZED.sqlite",
-  "ledgerContextCollection": "pairs001_equity_pairs_sqlite_OPTIMIZED_context"
+  "ledgerPath": "data/TraderLedger/pairs001_equity_pairs_postgres_OPTIMIZED",
+  "ledgerContextCollection": "pairs001_equity_pairs_postgres_OPTIMIZED_context"
 }

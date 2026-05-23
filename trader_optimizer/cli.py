@@ -4,13 +4,14 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from trader_optimizer.data import default_market_db, find_trader_root, load_bars
+from trader_optimizer.data import find_trader_root, load_bars
 from trader_optimizer.batch import (
     BatchSettings,
     optimize_candidates,
     write_optimization_plan,
 )
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
+from trader_optimizer.postgres import PostgresSettings, optuna_storage_url, postgres_settings_from_env
 from trader_optimizer.strategy_configs import discover_strategy_candidates
 
 
@@ -42,12 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Trader workspace root. Defaults to auto-discovery from cwd.",
     )
-    optimize_parser.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="SQLite historical bars DB. Defaults to TraderLab/Data/tws_historical.sqlite.",
-    )
+    add_postgres_options(optimize_parser)
     optimize_parser.add_argument("--symbol", default="AAPL")
     optimize_parser.add_argument("--bar-size", default="10 secs")
     optimize_parser.add_argument("--what-to-show", default="TRADES")
@@ -95,12 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Trader workspace root. Defaults to auto-discovery from cwd.",
     )
-    existing_parser.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="SQLite historical bars DB. Defaults to TraderLab/Data/tws_historical.sqlite.",
-    )
+    add_postgres_options(existing_parser)
     existing_parser.add_argument(
         "--config-glob",
         action="append",
@@ -156,22 +147,57 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def add_postgres_options(parser: argparse.ArgumentParser) -> None:
+    env = postgres_settings_from_env()
+    parser.add_argument(
+        "--pg-conninfo",
+        default=env.conninfo,
+        help="libpq PostgreSQL conninfo. Defaults to TRADER_PG_CONNINFO.",
+    )
+    parser.add_argument("--pg-host", default=env.host)
+    parser.add_argument("--pg-port", type=int, default=env.port)
+    parser.add_argument("--pg-database", default=env.database)
+    parser.add_argument("--pg-user", default=env.user)
+    parser.add_argument("--pg-password", default=env.password)
+    parser.add_argument(
+        "--optuna-storage-url",
+        default=env.optuna_storage_url,
+        help=(
+            "SQLAlchemy PostgreSQL URL for Optuna. Defaults to "
+            "TRADER_OPTIMIZER_OPTUNA_STORAGE or a URL built from PG settings."
+        ),
+    )
+
+
+def postgres_settings_from_args(args: argparse.Namespace) -> PostgresSettings:
+    return PostgresSettings(
+        conninfo=args.pg_conninfo or "",
+        host=args.pg_host,
+        port=args.pg_port,
+        database=args.pg_database,
+        user=args.pg_user,
+        password=args.pg_password,
+        optuna_storage_url=args.optuna_storage_url,
+    )
+
+
 def optimize(args: argparse.Namespace) -> int:
     trader_root = (args.trader_root or find_trader_root()).resolve()
-    db_path = (args.db or default_market_db(trader_root)).resolve()
+    pg_settings = postgres_settings_from_args(args)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     study_name = args.study_name or f"trader_optimizer_{args.symbol}_{timestamp}"
     output_dir = (
         args.output_dir
         or Path.cwd() / "runs" / f"{timestamp}_{args.symbol}_{args.bar_size.replace(' ', '')}"
     ).resolve()
-    storage_path = output_dir / "optuna-study.db"
+    storage_url = optuna_storage_url(pg_settings)
     verbose = not args.quiet
 
     if verbose:
         print("TraderOptimizer starting")
         print(f"  trader_root: {trader_root}")
-        print(f"  db: {db_path}")
+        print(f"  postgres: {pg_settings.display}")
+        print(f"  optuna_storage: {storage_url}")
         print(f"  symbol: {args.symbol}")
         print(f"  bar_size: {args.bar_size}")
         print(f"  what_to_show: {args.what_to_show}")
@@ -180,7 +206,7 @@ def optimize(args: argparse.Namespace) -> int:
         print(f"  trials: {args.trials}")
 
     window = load_bars(
-        db_path=db_path,
+        pg_settings=pg_settings,
         symbol=args.symbol,
         bar_size=args.bar_size,
         what_to_show=args.what_to_show,
@@ -203,7 +229,8 @@ def optimize(args: argparse.Namespace) -> int:
             train_fraction=args.train_fraction,
             output_dir=output_dir,
             study_name=study_name,
-            storage_path=storage_path,
+            storage_url=storage_url,
+            pg_settings=pg_settings,
             min_trades=args.min_trades,
             verbose=verbose,
         ),
@@ -214,13 +241,14 @@ def optimize(args: argparse.Namespace) -> int:
         print(f"  best_value: {artifacts.best_value:.8f}")
         print(f"  config_path: {artifacts.config_path}")
         print(f"  summary_path: {artifacts.summary_path}")
-        print(f"  study_db_path: {artifacts.study_db_path}")
+        print(f"  study_storage: {artifacts.study_storage}")
     return 0
 
 
 def optimize_existing(args: argparse.Namespace) -> int:
     trader_root = (args.trader_root or find_trader_root()).resolve()
-    db_path = (args.db or default_market_db(trader_root)).resolve()
+    pg_settings = postgres_settings_from_args(args)
+    storage_url = optuna_storage_url(pg_settings)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output_dir = (
         args.output_dir or Path.cwd() / "runs" / f"batch_{timestamp}"
@@ -235,7 +263,8 @@ def optimize_existing(args: argparse.Namespace) -> int:
     if verbose:
         print("TraderOptimizer batch starting")
         print(f"  trader_root: {trader_root}")
-        print(f"  db: {db_path}")
+        print(f"  postgres: {pg_settings.display}")
+        print(f"  optuna_storage: {storage_url}")
         print(f"  candidates: {len(candidates)}")
         print(f"  trials_per_candidate: {args.trials}")
         print(f"  max_bars: {args.max_bars}")
@@ -245,7 +274,8 @@ def optimize_existing(args: argparse.Namespace) -> int:
         if args.export_config_dir:
             print(f"  export_config_dir: {args.export_config_dir.resolve()}")
     settings = BatchSettings(
-        db_path=db_path,
+        pg_settings=pg_settings,
+        optuna_storage_url=storage_url,
         output_dir=output_dir,
         trials=args.trials,
         max_bars=args.max_bars,
@@ -255,7 +285,8 @@ def optimize_existing(args: argparse.Namespace) -> int:
     )
     if args.export_config_dir:
         settings = BatchSettings(
-            db_path=settings.db_path,
+            pg_settings=settings.pg_settings,
+            optuna_storage_url=settings.optuna_storage_url,
             output_dir=settings.output_dir,
             trials=settings.trials,
             max_bars=settings.max_bars,
