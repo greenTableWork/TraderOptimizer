@@ -17,6 +17,11 @@ from trader_optimizer.data import (
     split_train_validation,
 )
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
+from trader_optimizer.postgres import (
+    PostgresSettings,
+    insert_optimizer_batch_results,
+    postgres_connection,
+)
 from trader_optimizer.simple_strategies import (
     SimpleResult,
     bollinger_breakout_directions,
@@ -35,7 +40,8 @@ from trader_optimizer.strategy_configs import StrategyCandidate
 
 @dataclass(frozen=True)
 class BatchSettings:
-    db_path: Path
+    pg_settings: PostgresSettings
+    optuna_storage_url: str
     output_dir: Path
     trials: int
     max_bars: int
@@ -88,7 +94,7 @@ def optimize_candidates(
             result = _skipped(candidate, str(exc))
         results.append(result)
 
-    _write_batch_summary(settings.output_dir, results)
+    _write_batch_summary(settings, results)
     if settings.export_config_dir:
         _export_best_configs(settings.export_config_dir, results)
     return results
@@ -104,12 +110,13 @@ def write_optimization_plan(
         "# TraderOptimizer Config Optimization Plan",
         "",
         "This plan is generated from the current Trader strategy config JSON files.",
-        "It describes what Optuna will tune, which SQLite data profile will be used, "
+        "It describes what Optuna will tune, which PostgreSQL data profile will be used, "
         "and where the resulting artifacts will be written.",
         "",
         "## Run Settings",
         "",
-        f"- SQLite data: `{settings.db_path}`",
+        f"- PostgreSQL data: `{settings.pg_settings.display}`",
+        f"- Optuna storage: `{settings.optuna_storage_url}`",
         f"- Output directory: `{settings.output_dir}`",
         f"- Exported configs: `{settings.export_config_dir}`"
         if settings.export_config_dir
@@ -162,12 +169,12 @@ def _optimize_cso(
 ) -> BatchItemResult:
     symbol = candidate.symbols[0]
     profile = choose_data_profile(
-        settings.db_path,
+        settings.pg_settings,
         symbol,
         preferred_bar_size=settings.preferred_bar_size,
     )
     window = load_bars(
-        db_path=settings.db_path,
+        pg_settings=settings.pg_settings,
         symbol=symbol,
         bar_size=profile.bar_size,
         what_to_show=profile.what_to_show,
@@ -181,8 +188,9 @@ def _optimize_cso(
             trials=settings.trials,
             train_fraction=settings.train_fraction,
             output_dir=output_dir,
-            study_name=f"{candidate.name}_cso",
-            storage_path=output_dir / "optuna-study.db",
+            study_name=f"{settings.output_dir.name}_{candidate.name}_cso",
+            storage_url=settings.optuna_storage_url,
+            pg_settings=settings.pg_settings,
             min_trades=2,
             verbose=False,
         ),
@@ -207,12 +215,12 @@ def _optimize_single_signal(
 ) -> BatchItemResult:
     symbol = candidate.symbols[0]
     profile = choose_data_profile(
-        settings.db_path,
+        settings.pg_settings,
         symbol,
         preferred_bar_size=settings.preferred_bar_size,
     )
     bars = load_bars(
-        db_path=settings.db_path,
+        pg_settings=settings.pg_settings,
         symbol=symbol,
         bar_size=profile.bar_size,
         what_to_show=profile.what_to_show,
@@ -227,8 +235,8 @@ def _optimize_single_signal(
     output_dir.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         direction="maximize",
-        study_name=f"{candidate.name}_simple",
-        storage=f"sqlite:///{output_dir / 'optuna-study.db'}",
+        study_name=f"{settings.output_dir.name}_{candidate.name}_simple",
+        storage=settings.optuna_storage_url,
         load_if_exists=True,
     )
     study.optimize(
@@ -256,7 +264,7 @@ def _optimize_single_signal(
         validation_bars,
         study.best_trial,
     )
-    best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED.sqlite"
+    best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED"
     best_config["ledgerContextCollection"] = f"{candidate.name}_OPTIMIZED_context"
 
     config_path = output_dir / "best_config.json"
@@ -414,13 +422,13 @@ def _optimize_portfolio(
     profiles: dict[str, Any] = {}
     for symbol in candidate.symbols:
         profile = choose_data_profile(
-            settings.db_path,
+            settings.pg_settings,
             symbol,
             preferred_bar_size=settings.preferred_bar_size,
         )
         profiles[symbol] = profile.__dict__
         symbol_bars[symbol] = load_bars(
-            db_path=settings.db_path,
+            pg_settings=settings.pg_settings,
             symbol=symbol,
             bar_size=profile.bar_size,
             what_to_show=profile.what_to_show,
@@ -442,8 +450,8 @@ def _optimize_portfolio(
     output_dir.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         direction="maximize",
-        study_name=f"{candidate.name}_portfolio",
-        storage=f"sqlite:///{output_dir / 'optuna-study.db'}",
+        study_name=f"{settings.output_dir.name}_{candidate.name}_portfolio",
+        storage=settings.optuna_storage_url,
         load_if_exists=True,
     )
     study.optimize(
@@ -471,7 +479,7 @@ def _optimize_portfolio(
         validation_symbol_bars,
         study.best_trial,
     )
-    best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED.sqlite"
+    best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED"
     best_config["ledgerContextCollection"] = f"{candidate.name}_OPTIMIZED_context"
     config_path = output_dir / "best_config.json"
     summary_path = output_dir / "best_summary.json"
@@ -631,13 +639,16 @@ def _skipped(candidate: StrategyCandidate, reason: str) -> BatchItemResult:
 
 
 def _write_batch_summary(
-    output_dir: Path,
+    settings: BatchSettings,
     results: list[BatchItemResult],
 ) -> None:
+    output_dir = settings.output_dir
     write_json(
         output_dir / "batch_summary.json",
         {"results": [result.to_dict() for result in results]},
     )
+    with postgres_connection(settings.pg_settings) as conn:
+        insert_optimizer_batch_results(conn, output_dir.name, results)
     with (output_dir / "batch_summary.csv").open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
             file,
@@ -697,7 +708,7 @@ def _plan_row(candidate: StrategyCandidate, settings: BatchSettings) -> str:
         profiles = []
         for symbol in candidate.symbols:
             profile = choose_data_profile(
-                settings.db_path,
+                settings.pg_settings,
                 symbol,
                 preferred_bar_size=settings.preferred_bar_size,
             )

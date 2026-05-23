@@ -29,7 +29,7 @@ def build_constant_step_offset_config(
         "orderQuantity": round(params.order_quantity, 6),
         "contract": contract,
         "price_contract": contract.copy(),
-        "ledgerPath": f"data/TraderLedger/{ledger_stem}.sqlite",
+        "ledgerPath": f"data/TraderLedger/{ledger_stem}",
         "ledgerContextCollection": f"{ledger_stem}_context",
     }
 

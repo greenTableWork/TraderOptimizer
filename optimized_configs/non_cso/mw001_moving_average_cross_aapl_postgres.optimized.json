@@ -1,9 +1,9 @@
 {
   "strategy_type": "MovingAverageCross",
   "fastWindow": 6,
-  "slowWindow": 94,
-  "orderQuantityInUSD": 3879.8199999999997,
-  "orderQuantity": 14.0,
+  "slowWindow": 83,
+  "orderQuantityInUSD": 4711.21,
+  "orderQuantity": 17.0,
   "contract": {
     "symbol": "AAPL",
     "secType": "STOCK",
@@ -16,6 +16,6 @@
     "currency": "USD",
     "exchange": "BACKTESTER"
   },
-  "ledgerPath": "data/TraderLedger/moving_average_cross_aapl_tws_sqlite_OPTIMIZED.sqlite",
-  "ledgerContextCollection": "moving_average_cross_aapl_tws_sqlite_OPTIMIZED_context"
+  "ledgerPath": "data/TraderLedger/mw001_moving_average_cross_aapl_postgres_OPTIMIZED",
+  "ledgerContextCollection": "mw001_moving_average_cross_aapl_postgres_OPTIMIZED_context"
 }

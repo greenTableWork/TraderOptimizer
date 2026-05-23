@@ -24,3 +24,4 @@ def test_build_constant_step_offset_config_has_tradercore_fields() -> None:
     assert config["orderQuantity"] == 5.0
     assert config["contract"] == config["price_contract"]
     assert config["contract"]["exchange"] == "BACKTESTER"
+    assert config["ledgerPath"] == "data/TraderLedger/CSO_AAPL_OPTIMIZED"

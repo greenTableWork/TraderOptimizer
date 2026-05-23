@@ -1,11 +1,12 @@
 # TraderOptimizer Config Optimization Plan
 
 This plan is generated from the current Trader strategy config JSON files.
-It describes what Optuna will tune, which SQLite data profile will be used, and where the resulting artifacts will be written.
+It describes what Optuna will tune, which PostgreSQL data profile will be used, and where the resulting artifacts will be written.
 
 ## Run Settings
 
-- SQLite data: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/Data/tws_historical.sqlite`
+- PostgreSQL data: `historical_bars` in the local `trader` database
+- Optuna storage: PostgreSQL
 - Output directory: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing`
 - Exported configs: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso`
 - Trials per config: `50`
@@ -32,15 +33,15 @@ The objective blends train and validation simulated return while penalizing open
 
 | Config | Type | Variant | Symbols | Data profile | Tuned fields |
 | --- | --- | --- | --- | --- | --- |
-| `moving_average_cross_aapl_tws_sqlite` | `MovingAverageCross` | `MovingAverageCross` | AAPL | AAPL: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity, orderQuantityInUSD |
-| `mw001_moving_average_cross_aapl_sqlite` | `MovingAverageCross` | `MovingAverageCross` | AAPL | AAPL: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity, orderQuantityInUSD |
-| `pairs001_equity_pairs_sqlite` | `PortfolioAllocation` | `PAIRS-001` | GOOGL, GOOG, AMD, NVDA, AAPL, MSFT | GOOGL: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>AAPL: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1 | pairWindow, pairEntryZ, pairExitZ, maxGrossExposure |
-| `qs001_volatility_targeting_top_stocks_sqlite` | `PortfolioAllocation` | `QS-001` | AAPL, AMD, AMZN, AVGO, GOOG, GOOGL, META, MSFT, NVDA, TSLA | AAPL: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>AMZN: 1 min TRADES rth=1<br>AVGO: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>GOOGL: 1 min TRADES rth=1<br>META: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>TSLA: 1 min TRADES rth=1 | targetVolatility, volatilityWindow, maxGrossExposure |
-| `qs002_momentum_factor_top_stocks_sqlite` | `PortfolioAllocation` | `QS-002` | AAPL, AMD, AMZN, AVGO, GOOG, GOOGL, META, MSFT, NVDA, TSLA | AAPL: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>AMZN: 1 min TRADES rth=1<br>AVGO: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>GOOGL: 1 min TRADES rth=1<br>META: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>TSLA: 1 min TRADES rth=1 | momentumLookback, momentumLegSize, maxGrossExposure |
-| `ts002_ema_cross_tsla_sqlite` | `TechnicalSignal` | `TS-002` | TSLA | TSLA: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity |
-| `ts003_bollinger_breakout_amd_sqlite` | `TechnicalSignal` | `TS-003` | AMD | AMD: 1 min TRADES rth=1 | middleWindow, trendWindow, bandStddev, orderQuantity |
-| `ts004_opening_range_breakout_aapl_sqlite` | `TechnicalSignal` | `TS-004` | AAPL | AAPL: 1 min TRADES rth=1 | openingRangeBars, useAtrStop, atrWindow, orderQuantity |
-| `ts005_rsi_divergence_goog_sqlite` | `TechnicalSignal` | `TS-005` | GOOG | GOOG: 1 min TRADES rth=1 | rsiPeriod, divergenceLookback, orderQuantity |
+| `moving_average_cross_aapl_tws_postgres` | `MovingAverageCross` | `MovingAverageCross` | AAPL | AAPL: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity, orderQuantityInUSD |
+| `mw001_moving_average_cross_aapl_postgres` | `MovingAverageCross` | `MovingAverageCross` | AAPL | AAPL: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity, orderQuantityInUSD |
+| `pairs001_equity_pairs_postgres` | `PortfolioAllocation` | `PAIRS-001` | GOOGL, GOOG, AMD, NVDA, AAPL, MSFT | GOOGL: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>AAPL: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1 | pairWindow, pairEntryZ, pairExitZ, maxGrossExposure |
+| `qs001_volatility_targeting_top_stocks_postgres` | `PortfolioAllocation` | `QS-001` | AAPL, AMD, AMZN, AVGO, GOOG, GOOGL, META, MSFT, NVDA, TSLA | AAPL: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>AMZN: 1 min TRADES rth=1<br>AVGO: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>GOOGL: 1 min TRADES rth=1<br>META: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>TSLA: 1 min TRADES rth=1 | targetVolatility, volatilityWindow, maxGrossExposure |
+| `qs002_momentum_factor_top_stocks_postgres` | `PortfolioAllocation` | `QS-002` | AAPL, AMD, AMZN, AVGO, GOOG, GOOGL, META, MSFT, NVDA, TSLA | AAPL: 1 min TRADES rth=1<br>AMD: 1 min TRADES rth=1<br>AMZN: 1 min TRADES rth=1<br>AVGO: 1 min TRADES rth=1<br>GOOG: 1 min TRADES rth=1<br>GOOGL: 1 min TRADES rth=1<br>META: 1 min TRADES rth=1<br>MSFT: 1 min TRADES rth=1<br>NVDA: 1 min TRADES rth=1<br>TSLA: 1 min TRADES rth=1 | momentumLookback, momentumLegSize, maxGrossExposure |
+| `ts002_ema_cross_tsla_postgres` | `TechnicalSignal` | `TS-002` | TSLA | TSLA: 1 min TRADES rth=1 | fastWindow, slowWindow, orderQuantity |
+| `ts003_bollinger_breakout_amd_postgres` | `TechnicalSignal` | `TS-003` | AMD | AMD: 1 min TRADES rth=1 | middleWindow, trendWindow, bandStddev, orderQuantity |
+| `ts004_opening_range_breakout_aapl_postgres` | `TechnicalSignal` | `TS-004` | AAPL | AAPL: 1 min TRADES rth=1 | openingRangeBars, useAtrStop, atrWindow, orderQuantity |
+| `ts005_rsi_divergence_goog_postgres` | `TechnicalSignal` | `TS-005` | GOOG | GOOG: 1 min TRADES rth=1 | rsiPeriod, divergenceLookback, orderQuantity |
 
 ## Validation Path
 

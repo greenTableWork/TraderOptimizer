@@ -16,6 +16,6 @@
     "currency": "USD",
     "exchange": "BACKTESTER"
   },
-  "ledgerPath": "data/TraderLedger/ts005_rsi_divergence_goog_sqlite_OPTIMIZED.sqlite",
-  "ledgerContextCollection": "ts005_rsi_divergence_goog_sqlite_OPTIMIZED_context"
+  "ledgerPath": "data/TraderLedger/ts005_rsi_divergence_goog_postgres_OPTIMIZED",
+  "ledgerContextCollection": "ts005_rsi_divergence_goog_postgres_OPTIMIZED_context"
 }
