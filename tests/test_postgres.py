@@ -101,6 +101,8 @@ def test_optimizer_schema_uses_numeric_storage_not_double_precision() -> None:
     assert "best_value NUMERIC(38, 12)" in schema_sql
     assert "value NUMERIC(38, 12)" in schema_sql
     assert "strategy_return_pct NUMERIC(38, 12)" in schema_sql
+    assert "optimizer_sweep_candidates" in schema_sql
+    assert "total_return NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN best_value TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN value TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN strategy_return_pct TYPE NUMERIC(38, 12)" in schema_sql

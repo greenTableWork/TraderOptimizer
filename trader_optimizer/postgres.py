@@ -190,6 +190,23 @@ def ensure_optimizer_schema(conn) -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
 
+            CREATE TABLE IF NOT EXISTS optimizer_sweep_candidates (
+                id BIGSERIAL PRIMARY KEY,
+                report_name TEXT NOT NULL,
+                strategy_id TEXT NOT NULL,
+                selected BOOLEAN NOT NULL,
+                total_return NUMERIC(38, 12) NOT NULL,
+                max_drawdown NUMERIC(38, 12) NOT NULL,
+                sharpe NUMERIC(38, 12) NOT NULL,
+                trade_count BIGINT NOT NULL,
+                bars BIGINT NOT NULL,
+                config JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+
+            CREATE INDEX IF NOT EXISTS optimizer_sweep_candidates_report_idx
+                ON optimizer_sweep_candidates (report_name, strategy_id);
+
             ALTER TABLE optimizer_runs
                 ADD COLUMN IF NOT EXISTS best_value NUMERIC(38, 12);
 
@@ -248,7 +265,7 @@ def insert_optimizer_run(
     data_source: str,
     bar_size: str,
     what_to_show: str,
-    use_rth: int | bool,
+    use_rth: int | bool | None,
     first_timestamp: str,
     last_timestamp: str,
     bars: int,
@@ -289,7 +306,7 @@ def insert_optimizer_run(
                 data_source,
                 bar_size,
                 what_to_show,
-                bool(use_rth),
+                None if use_rth is None else bool(use_rth),
                 first_timestamp,
                 last_timestamp,
                 bars,
@@ -420,4 +437,58 @@ def insert_optimizer_batch_results(conn, batch_name: str, results: list[Any]) ->
             """,
             rows,
         )
+    conn.commit()
+
+
+def insert_optimizer_sweep_report(
+    conn,
+    report_name: str,
+    candidates: list[Any],
+    selected: list[Any],
+) -> None:
+    import json
+
+    from psycopg2.extras import Json, execute_values
+
+    ensure_optimizer_schema(conn)
+    selected_keys = {
+        (
+            str(candidate.strategy_id),
+            json.dumps(candidate.config, sort_keys=True),
+        )
+        for candidate in selected
+    }
+    rows = []
+    for candidate in candidates:
+        config_json = json.dumps(candidate.config, sort_keys=True)
+        rows.append(
+            (
+                report_name,
+                str(candidate.strategy_id),
+                (str(candidate.strategy_id), config_json) in selected_keys,
+                _numeric_or_none(candidate.total_return),
+                _numeric_or_none(candidate.max_drawdown),
+                _numeric_or_none(candidate.sharpe),
+                int(candidate.trade_count),
+                int(candidate.bars),
+                Json(candidate.config),
+            )
+        )
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM optimizer_sweep_candidates WHERE report_name = %s",
+            (report_name,),
+        )
+        if rows:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO optimizer_sweep_candidates (
+                    report_name, strategy_id, selected, total_return, max_drawdown,
+                    sharpe, trade_count, bars, config
+                )
+                VALUES %s
+                """,
+                rows,
+            )
     conn.commit()
