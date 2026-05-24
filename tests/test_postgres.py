@@ -64,6 +64,10 @@ def test_optimizer_schema_uses_money_and_position_domains() -> None:
     assert "quantity trader_position_quantity" in schema_sql
     assert "price trader_currency_amount" in schema_sql
     assert "commission trader_currency_amount" in schema_sql
+    assert "information_schema.columns" in schema_sql
+    assert "ALTER TABLE historical_bars" in schema_sql
+    assert "ALTER COLUMN open TYPE NUMERIC(38, 12)" in schema_sql
+    assert "ALTER COLUMN volume TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER TABLE optimizer_fills" in schema_sql
     assert conn.commits == 1
 
@@ -106,6 +110,7 @@ def test_optimizer_schema_uses_numeric_storage_not_double_precision() -> None:
     assert "ALTER COLUMN best_value TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN value TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN strategy_return_pct TYPE NUMERIC(38, 12)" in schema_sql
+    assert "ALTER COLUMN total_return TYPE NUMERIC(38, 12)" in schema_sql
 
 
 def test_postgres_numeric_values_use_decimal_strings() -> None:
