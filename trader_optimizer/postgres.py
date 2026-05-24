@@ -207,6 +207,39 @@ def ensure_optimizer_schema(conn) -> None:
             CREATE INDEX IF NOT EXISTS optimizer_sweep_candidates_report_idx
                 ON optimizer_sweep_candidates (report_name, strategy_id);
 
+            DO $$
+            BEGIN
+                IF to_regclass('public.historical_bars') IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'historical_bars'
+                          AND column_name IN ('open', 'high', 'low', 'close', 'volume', 'wap')
+                          AND (
+                              data_type <> 'numeric'
+                              OR numeric_precision IS DISTINCT FROM 38
+                              OR numeric_scale IS DISTINCT FROM 12
+                          )
+                    )
+                THEN
+                    ALTER TABLE historical_bars
+                        ALTER COLUMN open TYPE NUMERIC(38, 12)
+                            USING open::numeric(38, 12),
+                        ALTER COLUMN high TYPE NUMERIC(38, 12)
+                            USING high::numeric(38, 12),
+                        ALTER COLUMN low TYPE NUMERIC(38, 12)
+                            USING low::numeric(38, 12),
+                        ALTER COLUMN close TYPE NUMERIC(38, 12)
+                            USING close::numeric(38, 12),
+                        ALTER COLUMN volume TYPE NUMERIC(38, 12)
+                            USING volume::numeric(38, 12),
+                        ALTER COLUMN wap TYPE NUMERIC(38, 12)
+                            USING wap::numeric(38, 12);
+                END IF;
+            END
+            $$;
+
             ALTER TABLE optimizer_runs
                 ADD COLUMN IF NOT EXISTS best_value NUMERIC(38, 12);
 
@@ -218,6 +251,11 @@ def ensure_optimizer_schema(conn) -> None:
                 ADD COLUMN IF NOT EXISTS strategy_return_pct NUMERIC(38, 12),
                 ADD COLUMN IF NOT EXISTS benchmark_return_pct NUMERIC(38, 12),
                 ADD COLUMN IF NOT EXISTS excess_return_pct NUMERIC(38, 12);
+
+            ALTER TABLE optimizer_sweep_candidates
+                ADD COLUMN IF NOT EXISTS total_return NUMERIC(38, 12),
+                ADD COLUMN IF NOT EXISTS max_drawdown NUMERIC(38, 12),
+                ADD COLUMN IF NOT EXISTS sharpe NUMERIC(38, 12);
 
             ALTER TABLE optimizer_runs
                 ALTER COLUMN best_value TYPE NUMERIC(38, 12)
@@ -236,6 +274,14 @@ def ensure_optimizer_schema(conn) -> None:
                     USING benchmark_return_pct::numeric,
                 ALTER COLUMN excess_return_pct TYPE NUMERIC(38, 12)
                     USING excess_return_pct::numeric;
+
+            ALTER TABLE optimizer_sweep_candidates
+                ALTER COLUMN total_return TYPE NUMERIC(38, 12)
+                    USING total_return::numeric,
+                ALTER COLUMN max_drawdown TYPE NUMERIC(38, 12)
+                    USING max_drawdown::numeric,
+                ALTER COLUMN sharpe TYPE NUMERIC(38, 12)
+                    USING sharpe::numeric;
 
             ALTER TABLE optimizer_fills
                 ALTER COLUMN quantity TYPE trader_position_quantity
