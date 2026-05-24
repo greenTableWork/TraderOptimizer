@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import os
 import shutil
@@ -22,6 +21,8 @@ from trader_optimizer.optimizer import OptimizationSettings, run_optimization
 from trader_optimizer.postgres import (
     PostgresSettings,
     insert_optimizer_batch_results,
+    insert_optimizer_run,
+    insert_optimizer_trials,
     postgres_connection,
 )
 from trader_optimizer.simple_strategies import (
@@ -223,7 +224,7 @@ def write_optimization_plan(
             "",
             "## Validation Path",
             "",
-            "1. Inspect the generated `best_summary.json` and `trials.csv` for each strategy.",
+            "1. Inspect the generated `best_summary.json` and PostgreSQL `optimizer_trials` rows for each strategy.",
             "2. Run promising `best_config.json` files through TraderCore `BackTester`; the Python simulator is a fast search harness, not the execution source of truth.",
             "3. Promote only configs that survive the C++ backtest with acceptable fees, trade count, and drawdown.",
             "",
@@ -309,9 +310,10 @@ def _optimize_single_signal(
     )
     output_dir = settings.output_dir / candidate.name
     output_dir.mkdir(parents=True, exist_ok=True)
+    study_name = f"{settings.output_dir.name}_{candidate.name}_simple"
     study = optuna.create_study(
         direction="maximize",
-        study_name=f"{settings.output_dir.name}_{candidate.name}_simple",
+        study_name=study_name,
         storage=settings.optuna_storage_url,
         load_if_exists=True,
     )
@@ -364,7 +366,12 @@ def _optimize_single_signal(
 
     config_path = output_dir / "best_config.json"
     summary_path = output_dir / "best_summary.json"
-    trials_path = output_dir / "trials.csv"
+    metrics = {
+        "train": train_result.to_dict(),
+        "validation": validation_result.to_dict(),
+        "all": all_result.to_dict(),
+    }
+    hyperparameters = dict(study.best_trial.params)
     write_json(config_path, best_config)
     write_json(
         summary_path,
@@ -376,16 +383,35 @@ def _optimize_single_signal(
             "symbols": list(candidate.symbols),
             "source_config": str(candidate.path),
             "data_profile": profile.__dict__,
-            "metrics": {
-                "train": train_result.to_dict(),
-                "validation": validation_result.to_dict(),
-                "all": all_result.to_dict(),
-            },
+            "metrics": metrics,
             "benchmark": benchmark,
-            "hyperparameters": study.best_trial.params,
+            "hyperparameters": hyperparameters,
         },
     )
-    _write_trials(trials_path, study.trials)
+    with postgres_connection(settings.pg_settings) as conn:
+        run_id = insert_optimizer_run(
+            conn,
+            study_name=study_name,
+            run_kind="batch",
+            symbol=symbol,
+            strategy_name=candidate.name,
+            strategy_type=candidate.strategy_type,
+            variant=candidate.variant,
+            output_dir=output_dir,
+            config_path=config_path,
+            summary_path=summary_path,
+            best_value=float(study.best_value),
+            data_source=settings.pg_settings.display,
+            bar_size=profile.bar_size,
+            what_to_show=profile.what_to_show,
+            use_rth=profile.use_rth,
+            first_timestamp=bars[0].timestamp_utc,
+            last_timestamp=bars[-1].timestamp_utc,
+            bars=len(bars),
+            metrics=metrics,
+            hyperparameters=hyperparameters,
+        )
+        insert_optimizer_trials(conn, run_id, study.trials)
     return BatchItemResult(
         name=candidate.name,
         strategy_type=candidate.strategy_type,
@@ -567,9 +593,10 @@ def _optimize_portfolio(
 
     output_dir = settings.output_dir / candidate.name
     output_dir.mkdir(parents=True, exist_ok=True)
+    study_name = f"{settings.output_dir.name}_{candidate.name}_portfolio"
     study = optuna.create_study(
         direction="maximize",
-        study_name=f"{settings.output_dir.name}_{candidate.name}_portfolio",
+        study_name=study_name,
         storage=settings.optuna_storage_url,
         load_if_exists=True,
     )
@@ -621,7 +648,12 @@ def _optimize_portfolio(
     best_config["ledgerContextCollection"] = f"{candidate.name}_OPTIMIZED_context"
     config_path = output_dir / "best_config.json"
     summary_path = output_dir / "best_summary.json"
-    trials_path = output_dir / "trials.csv"
+    metrics = {
+        "train": train_result.to_dict(),
+        "validation": validation_result.to_dict(),
+        "all": all_result.to_dict(),
+    }
+    hyperparameters = dict(study.best_trial.params)
     write_json(config_path, best_config)
     write_json(
         summary_path,
@@ -633,16 +665,35 @@ def _optimize_portfolio(
             "symbols": list(candidate.symbols),
             "source_config": str(candidate.path),
             "data_profiles": profiles,
-            "metrics": {
-                "train": train_result.to_dict(),
-                "validation": validation_result.to_dict(),
-                "all": all_result.to_dict(),
-            },
+            "metrics": metrics,
             "benchmark": benchmark,
-            "hyperparameters": study.best_trial.params,
+            "hyperparameters": hyperparameters,
         },
     )
-    _write_trials(trials_path, study.trials)
+    with postgres_connection(settings.pg_settings) as conn:
+        run_id = insert_optimizer_run(
+            conn,
+            study_name=study_name,
+            run_kind="batch",
+            symbol=",".join(candidate.symbols),
+            strategy_name=candidate.name,
+            strategy_type=candidate.strategy_type,
+            variant=candidate.variant,
+            output_dir=output_dir,
+            config_path=config_path,
+            summary_path=summary_path,
+            best_value=float(study.best_value),
+            data_source=settings.pg_settings.display,
+            bar_size=_profile_value_list(profiles, "bar_size"),
+            what_to_show=_profile_value_list(profiles, "what_to_show"),
+            use_rth=_profile_use_rth(profiles),
+            first_timestamp=_first_timestamp(symbol_bars),
+            last_timestamp=_last_timestamp(symbol_bars),
+            bars=_total_bars(symbol_bars),
+            metrics=metrics,
+            hyperparameters=hyperparameters,
+        )
+        insert_optimizer_trials(conn, run_id, study.trials)
     return BatchItemResult(
         name=candidate.name,
         strategy_type=candidate.strategy_type,
@@ -850,31 +901,6 @@ def _write_batch_summary(
     )
     with postgres_connection(settings.pg_settings) as conn:
         insert_optimizer_batch_results(conn, output_dir.name, results)
-    with (output_dir / "batch_summary.csv").open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "name",
-                "strategy_type",
-                "variant",
-                "symbols",
-                "status",
-                "best_value",
-                "strategy_return_pct",
-                "benchmark_return_pct",
-                "excess_return_pct",
-                "best_config",
-                "summary",
-                "reason",
-                "source_config",
-            ],
-            extrasaction="ignore",
-        )
-        writer.writeheader()
-        for result in results:
-            row = result.to_dict()
-            row["symbols"] = ",".join(result.symbols)
-            writer.writerow(row)
 
 
 def _export_best_configs(
@@ -967,20 +993,36 @@ def _tuned_fields(candidate: StrategyCandidate) -> list[str]:
     return []
 
 
-def _write_trials(path: Path, trials: list[optuna.trial.FrozenTrial]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=["number", "value", "state", "params_json", "user_attrs_json"],
+def _profile_value_list(profiles: dict[str, Any], field: str) -> str:
+    return ",".join(
+        sorted(
+            {
+                str(profile[field])
+                for profile in profiles.values()
+                if profile.get(field) is not None
+            }
         )
-        writer.writeheader()
-        for trial in trials:
-            writer.writerow(
-                {
-                    "number": trial.number,
-                    "value": trial.value,
-                    "state": trial.state.name,
-                    "params_json": json.dumps(trial.params, sort_keys=True),
-                    "user_attrs_json": json.dumps(trial.user_attrs, sort_keys=True),
-                }
-            )
+    )
+
+
+def _profile_use_rth(profiles: dict[str, Any]) -> int | None:
+    values = {
+        int(profile["use_rth"])
+        for profile in profiles.values()
+        if profile.get("use_rth") is not None
+    }
+    if len(values) == 1:
+        return next(iter(values))
+    return None
+
+
+def _first_timestamp(symbol_bars: dict[str, list[Bar]]) -> str:
+    return min(bar.timestamp_utc for bars in symbol_bars.values() for bar in bars)
+
+
+def _last_timestamp(symbol_bars: dict[str, list[Bar]]) -> str:
+    return max(bar.timestamp_utc for bars in symbol_bars.values() for bar in bars)
+
+
+def _total_bars(symbol_bars: dict[str, list[Bar]]) -> int:
+    return sum(len(bars) for bars in symbol_bars.values())

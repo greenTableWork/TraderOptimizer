@@ -304,7 +304,7 @@ def optimize_existing(args: argparse.Namespace) -> int:
         print(f"  benchmark_passing: {ok}")
         print(f"  not_exported: {not_exported}")
         print(f"  summary_json: {output_dir / 'batch_summary.json'}")
-        print(f"  summary_csv: {output_dir / 'batch_summary.csv'}")
+        print("  pg_tables: optimizer_runs, optimizer_trials, optimizer_batch_results")
         if args.export_config_dir:
             print(f"  exported_configs: {args.export_config_dir.resolve()}")
     return 0 if ok else 1

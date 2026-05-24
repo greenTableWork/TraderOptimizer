@@ -45,6 +45,6 @@ The objective blends train and validation simulated return while penalizing open
 
 ## Validation Path
 
-1. Inspect the generated `best_summary.json` and `trials.csv` for each strategy.
+1. Inspect the generated `best_summary.json` and PostgreSQL `optimizer_trials` rows for each strategy.
 2. Run promising `best_config.json` files through TraderCore `BackTester`; the Python simulator is a fast search harness, not the execution source of truth.
 3. Promote only configs that survive the C++ backtest with acceptable fees, trade count, and drawdown.

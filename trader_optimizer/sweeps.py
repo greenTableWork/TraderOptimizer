@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import csv
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable
+
+from trader_optimizer.postgres import (
+    PostgresSettings,
+    insert_optimizer_sweep_report,
+    postgres_connection,
+)
 
 
 @dataclass(frozen=True)
@@ -58,51 +61,10 @@ def run_sweep_tasks(
 
 
 def write_sweep_report(
-    report_path: Path,
+    pg_settings: PostgresSettings,
+    report_name: str,
     candidates: list[SweepCandidate],
     selected: list[SweepCandidate],
 ) -> None:
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    selected_keys = {
-        candidate.strategy_id: json.dumps(candidate.config, sort_keys=True)
-        for candidate in selected
-    }
-    rows = []
-    for candidate in candidates:
-        config_json = json.dumps(candidate.config, sort_keys=True)
-        rows.append(
-            {
-                "strategy_id": candidate.strategy_id,
-                "selected": config_json == selected_keys[candidate.strategy_id],
-                "total_return": candidate.total_return,
-                "max_drawdown": candidate.max_drawdown,
-                "sharpe": candidate.sharpe,
-                "trade_count": candidate.trade_count,
-                "bars": candidate.bars,
-                "config": config_json,
-            }
-        )
-    rows.sort(
-        key=lambda row: (
-            str(row["strategy_id"]),
-            not bool(row["selected"]),
-            -float(row["total_return"]),
-        )
-    )
-    with report_path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "strategy_id",
-                "selected",
-                "total_return",
-                "max_drawdown",
-                "sharpe",
-                "trade_count",
-                "bars",
-                "config",
-            ],
-            lineterminator="\n",
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+    with postgres_connection(pg_settings) as conn:
+        insert_optimizer_sweep_report(conn, report_name, candidates, selected)

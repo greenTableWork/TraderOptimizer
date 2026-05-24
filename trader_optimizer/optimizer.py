@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,7 +40,6 @@ class OptimizationArtifacts:
     output_dir: Path
     config_path: Path
     summary_path: Path
-    trials_path: Path
     study_storage: str
     best_value: float
 
@@ -99,8 +96,6 @@ def run_optimization(
     config = build_constant_step_offset_config(window.symbol, best_params)
     config_path = settings.output_dir / "best_config.json"
     summary_path = settings.output_dir / "best_summary.json"
-    trials_path = settings.output_dir / "trials.csv"
-    fills_path = settings.output_dir / "fills.csv"
     metrics = {
         "train": train_result.to_dict(),
         "validation": validation_result.to_dict(),
@@ -134,8 +129,6 @@ def run_optimization(
             "benchmark": benchmark,
         },
     )
-    _write_trials_csv(trials_path, study.trials)
-    _write_fills_csv(fills_path, fills)
     with postgres_connection(settings.pg_settings) as conn:
         run_id = insert_optimizer_run(
             conn,
@@ -174,15 +167,12 @@ def run_optimization(
         print(f"  all_fills: {all_result.fills}")
         print(f"  config: {config_path}")
         print(f"  summary: {summary_path}")
-        print(f"  trials: {trials_path}")
-        print(f"  fills: {fills_path}")
         print("  pg_tables: optimizer_runs, optimizer_trials, optimizer_fills")
 
     return OptimizationArtifacts(
         output_dir=settings.output_dir,
         config_path=config_path,
         summary_path=summary_path,
-        trials_path=trials_path,
         study_storage=settings.storage_url,
         best_value=float(best_trial.value or 0.0),
     )
@@ -319,43 +309,3 @@ def _benchmark_comparison(
         "benchmark_net_pnl": benchmark_result.net_pnl,
         "excess_net_pnl": strategy_result.net_pnl - benchmark_result.net_pnl,
     }
-
-
-def _write_trials_csv(path: Path, trials: list[optuna.trial.FrozenTrial]) -> None:
-    fieldnames = [
-        "number",
-        "value",
-        "state",
-        "params_json",
-        "user_attrs_json",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for trial in trials:
-            writer.writerow(
-                {
-                    "number": trial.number,
-                    "value": trial.value,
-                    "state": trial.state.name,
-                    "params_json": json.dumps(trial.params, sort_keys=True),
-                    "user_attrs_json": json.dumps(trial.user_attrs, sort_keys=True),
-                }
-            )
-
-
-def _write_fills_csv(path: Path, fills: list[Any]) -> None:
-    fieldnames = [
-        "tick",
-        "timestamp_utc",
-        "action",
-        "step",
-        "quantity",
-        "price",
-        "commission",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for fill in fills:
-            writer.writerow(fill.__dict__)

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from trader_optimizer.sweeps import (
     SweepCandidate,
     choose_best,
@@ -44,14 +42,31 @@ def test_run_sweep_tasks_supports_parallel_workers() -> None:
     assert len(candidates) == 2
 
 
-def test_write_sweep_report_marks_selected(tmp_path: Path) -> None:
+def test_write_sweep_report_persists_to_postgres(monkeypatch) -> None:
+    class FakePostgresContext:
+        def __enter__(self):
+            return "connection"
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    calls = []
+
+    def fake_insert(conn, report_name, candidates, selected):
+        calls.append((conn, report_name, candidates, selected))
+
+    monkeypatch.setattr(
+        "trader_optimizer.sweeps.postgres_connection",
+        lambda settings: FakePostgresContext(),
+    )
+    monkeypatch.setattr(
+        "trader_optimizer.sweeps.insert_optimizer_sweep_report",
+        fake_insert,
+    )
+
     selected = [_candidate("A", 0.02)]
     candidates = [_candidate("A", 0.01), selected[0]]
-    report_path = tmp_path / "report.csv"
 
-    write_sweep_report(report_path, candidates, selected)
+    write_sweep_report(object(), "report", candidates, selected)
 
-    text = report_path.read_text()
-    assert "strategy_id,selected,total_return" in text
-    assert "A,True,0.02" in text
-    assert "A,False,0.01" in text
+    assert calls == [("connection", "report", candidates, selected)]

@@ -9,8 +9,9 @@ hyperparameters with Optuna, runs a simple local simulator, and writes:
 - `best_config.json`: a TraderCore-compatible strategy config.
 - `best_summary.json`: the best trial, metrics, and data window.
 - `optimizer_runs`, `optimizer_trials`, and `optimizer_fills` rows in PostgreSQL.
+- `optimizer_batch_results` rows for batch optimization summaries.
 - Optuna study tables in PostgreSQL.
-- CSV/JSON artifacts for review next to each run.
+- JSON config and summary artifacts for review next to each run.
 
 This is intentionally simple. Use it to search parameter ranges quickly, then
 validate promising configs with the real TraderCore `BackTester`.
@@ -112,8 +113,7 @@ trader-optimizer optimize-existing \
 The batch command writes one folder per strategy plus:
 
 - `runs/batch_existing/batch_summary.json`
-- `runs/batch_existing/batch_summary.csv`
-- `optimizer_batch_results` rows in PostgreSQL
+- `optimizer_runs`, `optimizer_trials`, and `optimizer_batch_results` rows in PostgreSQL
 
 Candidate strategies run concurrently by default, up to 4 workers. Pass
 `--workers 1` for serial execution or a larger value when PostgreSQL and the
