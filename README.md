@@ -4,14 +4,15 @@ TraderOptimizer is a small, verbose Optuna training loop for producing
 TraderCore-style strategy config JSON.
 
 The optimizer reads `public.historical_bars` from PostgreSQL, tries strategy
-hyperparameters with Optuna, runs a simple local simulator, and writes:
+hyperparameters with Optuna, runs a simple local simulator, and stores run
+details in PostgreSQL:
 
 - `best_config.json`: a TraderCore-compatible strategy config.
 - `best_summary.json`: the best trial, metrics, and data window.
 - `optimizer_runs`, `optimizer_trials`, and `optimizer_fills` rows in PostgreSQL.
 - `optimizer_batch_results` rows for batch optimization summaries.
 - Optuna study tables in PostgreSQL.
-- JSON config and summary artifacts for review next to each run.
+- JSON config and summary artifacts remain next to each run for review.
 
 This is intentionally simple. Use it to search parameter ranges quickly, then
 validate promising configs with the real TraderCore `BackTester`.
@@ -114,6 +115,9 @@ The batch command writes one folder per strategy plus:
 
 - `runs/batch_existing/batch_summary.json`
 - `optimizer_runs`, `optimizer_trials`, and `optimizer_batch_results` rows in PostgreSQL
+
+Detailed trial, fill, and batch metrics are stored in PostgreSQL tables rather
+than per-run detail files.
 
 Candidate strategies run concurrently by default, up to 4 workers. Pass
 `--workers 1` for serial execution or a larger value when PostgreSQL and the
