@@ -4,6 +4,7 @@ import getpass
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
@@ -88,6 +89,14 @@ def optuna_storage_url(settings: PostgresSettings) -> str:
     return f"postgresql+psycopg2://{user}{password}@{host}:{settings.port}/{database}"
 
 
+def _numeric_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
 def ensure_optimizer_schema(conn) -> None:
     with conn.cursor() as cursor:
         cursor.execute(
@@ -125,7 +134,7 @@ def ensure_optimizer_schema(conn) -> None:
                 output_dir TEXT NOT NULL,
                 config_path TEXT NOT NULL DEFAULT '',
                 summary_path TEXT NOT NULL DEFAULT '',
-                best_value DOUBLE PRECISION,
+                best_value NUMERIC(38, 12),
                 data_source TEXT NOT NULL,
                 bar_size TEXT NOT NULL DEFAULT '',
                 what_to_show TEXT NOT NULL DEFAULT '',
@@ -141,7 +150,7 @@ def ensure_optimizer_schema(conn) -> None:
             CREATE TABLE IF NOT EXISTS optimizer_trials (
                 run_id BIGINT NOT NULL REFERENCES optimizer_runs(id) ON DELETE CASCADE,
                 number INTEGER NOT NULL,
-                value DOUBLE PRECISION,
+                value NUMERIC(38, 12),
                 state TEXT NOT NULL,
                 params JSONB NOT NULL,
                 user_attrs JSONB NOT NULL,
@@ -173,18 +182,43 @@ def ensure_optimizer_schema(conn) -> None:
                 output_dir TEXT NOT NULL DEFAULT '',
                 best_config TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL DEFAULT '',
-                best_value DOUBLE PRECISION,
-                strategy_return_pct DOUBLE PRECISION,
-                benchmark_return_pct DOUBLE PRECISION,
-                excess_return_pct DOUBLE PRECISION,
+                best_value NUMERIC(38, 12),
+                strategy_return_pct NUMERIC(38, 12),
+                benchmark_return_pct NUMERIC(38, 12),
+                excess_return_pct NUMERIC(38, 12),
                 reason TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
 
+            ALTER TABLE optimizer_runs
+                ADD COLUMN IF NOT EXISTS best_value NUMERIC(38, 12);
+
+            ALTER TABLE optimizer_trials
+                ADD COLUMN IF NOT EXISTS value NUMERIC(38, 12);
+
             ALTER TABLE optimizer_batch_results
-                ADD COLUMN IF NOT EXISTS strategy_return_pct DOUBLE PRECISION,
-                ADD COLUMN IF NOT EXISTS benchmark_return_pct DOUBLE PRECISION,
-                ADD COLUMN IF NOT EXISTS excess_return_pct DOUBLE PRECISION;
+                ADD COLUMN IF NOT EXISTS best_value NUMERIC(38, 12),
+                ADD COLUMN IF NOT EXISTS strategy_return_pct NUMERIC(38, 12),
+                ADD COLUMN IF NOT EXISTS benchmark_return_pct NUMERIC(38, 12),
+                ADD COLUMN IF NOT EXISTS excess_return_pct NUMERIC(38, 12);
+
+            ALTER TABLE optimizer_runs
+                ALTER COLUMN best_value TYPE NUMERIC(38, 12)
+                    USING best_value::numeric;
+
+            ALTER TABLE optimizer_trials
+                ALTER COLUMN value TYPE NUMERIC(38, 12)
+                    USING value::numeric;
+
+            ALTER TABLE optimizer_batch_results
+                ALTER COLUMN best_value TYPE NUMERIC(38, 12)
+                    USING best_value::numeric,
+                ALTER COLUMN strategy_return_pct TYPE NUMERIC(38, 12)
+                    USING strategy_return_pct::numeric,
+                ALTER COLUMN benchmark_return_pct TYPE NUMERIC(38, 12)
+                    USING benchmark_return_pct::numeric,
+                ALTER COLUMN excess_return_pct TYPE NUMERIC(38, 12)
+                    USING excess_return_pct::numeric;
 
             ALTER TABLE optimizer_fills
                 ALTER COLUMN quantity TYPE trader_position_quantity
@@ -251,7 +285,7 @@ def insert_optimizer_run(
                 str(output_dir),
                 str(config_path),
                 str(summary_path),
-                best_value,
+                _numeric_or_none(best_value),
                 data_source,
                 bar_size,
                 what_to_show,
@@ -275,7 +309,7 @@ def insert_optimizer_trials(conn, run_id: int, trials: list[Any]) -> None:
         (
             run_id,
             trial.number,
-            trial.value,
+            _numeric_or_none(trial.value),
             trial.state.name,
             Json(trial.params),
             Json(trial.user_attrs),
@@ -315,9 +349,9 @@ def insert_optimizer_fills(conn, run_id: int, fills: list[Any]) -> None:
             getattr(fill, "timestamp_utc", None),
             getattr(fill, "action", ""),
             getattr(fill, "step", None),
-            getattr(fill, "quantity", None),
-            getattr(fill, "price", None),
-            getattr(fill, "commission", None),
+            _numeric_or_none(getattr(fill, "quantity", None)),
+            _numeric_or_none(getattr(fill, "price", None)),
+            _numeric_or_none(getattr(fill, "commission", None)),
         )
         for index, fill in enumerate(fills)
     ]
@@ -363,10 +397,10 @@ def insert_optimizer_batch_results(conn, batch_name: str, results: list[Any]) ->
             result.output_dir or "",
             result.best_config or "",
             result.summary or "",
-            result.best_value,
-            result.strategy_return_pct,
-            result.benchmark_return_pct,
-            result.excess_return_pct,
+            _numeric_or_none(result.best_value),
+            _numeric_or_none(result.strategy_return_pct),
+            _numeric_or_none(result.benchmark_return_pct),
+            _numeric_or_none(result.excess_return_pct),
             result.reason or "",
         )
         for result in results
