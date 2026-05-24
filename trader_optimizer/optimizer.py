@@ -17,6 +17,7 @@ from trader_optimizer.postgres import (
     insert_optimizer_trials,
     postgres_connection,
 )
+from trader_optimizer.simple_strategies import simulate_buy_and_hold
 from trader_optimizer.simulator import (
     SimulationResult,
     StrategyParams,
@@ -82,6 +83,18 @@ def run_optimization(
     train_result, _ = simulate_constant_step_offset(train_bars, best_params)
     validation_result, _ = simulate_constant_step_offset(validation_bars, best_params)
     all_result, fills = simulate_constant_step_offset(window.bars, best_params)
+    train_benchmark = simulate_buy_and_hold(
+        train_bars,
+        allocated_capital=train_result.allocated_capital,
+    )
+    validation_benchmark = simulate_buy_and_hold(
+        validation_bars,
+        allocated_capital=validation_result.allocated_capital,
+    )
+    all_benchmark = simulate_buy_and_hold(
+        window.bars,
+        allocated_capital=all_result.allocated_capital,
+    )
 
     config = build_constant_step_offset_config(window.symbol, best_params)
     config_path = settings.output_dir / "best_config.json"
@@ -92,6 +105,12 @@ def run_optimization(
         "train": train_result.to_dict(),
         "validation": validation_result.to_dict(),
         "all": all_result.to_dict(),
+    }
+    benchmark = {
+        "name": "buy_and_hold",
+        "train": _benchmark_comparison(train_result, train_benchmark),
+        "validation": _benchmark_comparison(validation_result, validation_benchmark),
+        "all": _benchmark_comparison(all_result, all_benchmark),
     }
     hyperparameters = dict(best_trial.params)
 
@@ -112,6 +131,7 @@ def run_optimization(
             "hyperparameters": hyperparameters,
             "resolved_strategy_params": _strategy_params_dict(best_params),
             "metrics": metrics,
+            "benchmark": benchmark,
         },
     )
     _write_trials_csv(trials_path, study.trials)
@@ -145,6 +165,11 @@ def run_optimization(
         print(f"  value: {best_trial.value:.8f}")
         print(f"  train_return_pct: {train_result.return_pct:.6f}")
         print(f"  validation_return_pct: {validation_result.return_pct:.6f}")
+        print(f"  buy_hold_return_pct: {all_benchmark.return_pct:.6f}")
+        print(
+            "  excess_return_pct: "
+            f"{all_result.return_pct - all_benchmark.return_pct:.6f}"
+        )
         print(f"  all_net_pnl: {all_result.net_pnl:.2f}")
         print(f"  all_fills: {all_result.fills}")
         print(f"  config: {config_path}")
@@ -181,12 +206,31 @@ class _Objective:
             self.validation_bars,
             params,
         )
+        train_benchmark = simulate_buy_and_hold(
+            self.train_bars,
+            allocated_capital=train_result.allocated_capital,
+        )
+        validation_benchmark = simulate_buy_and_hold(
+            self.validation_bars,
+            allocated_capital=validation_result.allocated_capital,
+        )
+        train_excess_return = train_result.return_pct - train_benchmark.return_pct
+        validation_excess_return = (
+            validation_result.return_pct - validation_benchmark.return_pct
+        )
 
         trial.set_user_attr("train_net_pnl", train_result.net_pnl)
         trial.set_user_attr("train_return_pct", train_result.return_pct)
+        trial.set_user_attr("train_buy_hold_return_pct", train_benchmark.return_pct)
+        trial.set_user_attr("train_excess_return_pct", train_excess_return)
         trial.set_user_attr("train_fills", train_result.fills)
         trial.set_user_attr("validation_net_pnl", validation_result.net_pnl)
         trial.set_user_attr("validation_return_pct", validation_result.return_pct)
+        trial.set_user_attr(
+            "validation_buy_hold_return_pct",
+            validation_benchmark.return_pct,
+        )
+        trial.set_user_attr("validation_excess_return_pct", validation_excess_return)
         trial.set_user_attr("validation_fills", validation_result.fills)
         trial.set_user_attr("final_position_value", validation_result.final_position_value)
         trial.set_user_attr("max_drawdown", validation_result.max_drawdown)
@@ -206,8 +250,8 @@ class _Objective:
         ) * 0.10
 
         return (
-            train_result.return_pct * 0.70
-            + validation_result.return_pct * 0.30
+            train_excess_return * 0.70
+            + validation_excess_return * 0.30
             - no_trade_penalty
             - inventory_penalty
             - drawdown_penalty
@@ -259,6 +303,21 @@ def _strategy_params_dict(params: StrategyParams) -> dict[str, float | int]:
         "orderQuantityInUSD": params.order_quantity_usd,
         "orderQuantity": params.order_quantity,
         "maxSteps": params.max_steps,
+    }
+
+
+def _benchmark_comparison(
+    strategy_result: SimulationResult,
+    benchmark_result: Any,
+) -> dict[str, object]:
+    return {
+        "benchmark": benchmark_result.to_dict(),
+        "strategy_return_pct": strategy_result.return_pct,
+        "benchmark_return_pct": benchmark_result.return_pct,
+        "excess_return_pct": strategy_result.return_pct - benchmark_result.return_pct,
+        "strategy_net_pnl": strategy_result.net_pnl,
+        "benchmark_net_pnl": benchmark_result.net_pnl,
+        "excess_net_pnl": strategy_result.net_pnl - benchmark_result.net_pnl,
     }
 
 

@@ -74,6 +74,43 @@ def simulate_target_directions(
     )
 
 
+def simulate_buy_and_hold(
+    bars: list[Bar],
+    *,
+    quantity: float | None = None,
+    allocated_capital: float | None = None,
+) -> SimpleResult:
+    if not bars:
+        raise ValueError("bars cannot be empty")
+    if (quantity is None) == (allocated_capital is None):
+        raise ValueError("Pass exactly one of quantity or allocated_capital")
+
+    first_price = bars[0].close
+    if first_price <= 0:
+        raise ValueError("first bar close must be positive")
+    if quantity is None:
+        quantity = float(allocated_capital or 0.0) / first_price
+    allocated = float(allocated_capital or quantity * first_price)
+    fee = stock_commission(quantity, first_price)
+    cash = -(quantity * first_price) - fee
+    equity_curve = [cash + quantity * bar.close for bar in bars]
+    final_position_value = quantity * bars[-1].close
+    ending_equity = cash + final_position_value
+    return SimpleResult(
+        bars=len(bars),
+        first_timestamp=bars[0].timestamp_utc,
+        last_timestamp=bars[-1].timestamp_utc,
+        net_pnl=ending_equity,
+        return_pct=ending_equity / max(allocated, 1.0),
+        max_drawdown=_max_drawdown(equity_curve),
+        fills=1,
+        commissions=fee,
+        final_position_value=final_position_value,
+        ending_equity=ending_equity,
+        allocated_capital=allocated,
+    )
+
+
 def sma_cross_directions(
     bars: list[Bar],
     fast_window: int,
@@ -257,6 +294,67 @@ def simulate_portfolio(
         bars=len(rows),
         first_timestamp=rows[0][0],
         last_timestamp=rows[-1][0],
+        net_pnl=ending_equity,
+        return_pct=ending_equity / max(portfolio_notional, 1.0),
+        max_drawdown=_max_drawdown(equity_curve),
+        fills=fills,
+        commissions=commissions,
+        final_position_value=final_position_value,
+        ending_equity=ending_equity,
+        allocated_capital=portfolio_notional,
+    )
+
+
+def simulate_equal_weight_buy_and_hold(
+    symbol_bars: dict[str, list[Bar]],
+    portfolio_notional: float,
+) -> SimpleResult:
+    rows = _aligned_rows(symbol_bars)
+    if not rows:
+        raise ValueError("No aligned multi-symbol rows")
+
+    first_timestamp, first_prices = rows[0]
+    symbols = sorted(first_prices)
+    if not symbols:
+        raise ValueError("No symbols in first aligned row")
+    per_symbol_notional = portfolio_notional / len(symbols)
+    positions = {}
+    cash = 0.0
+    commissions = 0.0
+    fills = 0
+    for symbol in symbols:
+        price = first_prices[symbol]
+        if price <= 0:
+            continue
+        quantity = per_symbol_notional / price
+        fee = stock_commission(quantity, price)
+        cash -= quantity * price + fee
+        commissions += fee
+        positions[symbol] = quantity
+        fills += 1
+
+    equity_curve = []
+    for _, prices in rows:
+        equity_curve.append(
+            cash
+            + sum(
+                positions.get(symbol, 0.0) * prices[symbol]
+                for symbol in symbols
+                if symbol in prices
+            )
+        )
+
+    last_timestamp, final_prices = rows[-1]
+    final_position_value = sum(
+        positions.get(symbol, 0.0) * final_prices[symbol]
+        for symbol in symbols
+        if symbol in final_prices
+    )
+    ending_equity = cash + final_position_value
+    return SimpleResult(
+        bars=len(rows),
+        first_timestamp=first_timestamp,
+        last_timestamp=last_timestamp,
         net_pnl=ending_equity,
         return_pct=ending_equity / max(portfolio_notional, 1.0),
         max_drawdown=_max_drawdown(equity_curve),

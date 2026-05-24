@@ -1,0 +1,23 @@
+{
+  "strategy_type": "ConstantStepOffset",
+  "baseline": 56.51,
+  "stepDelta": 0.087339,
+  "executionLimitOffset": 0.349356,
+  "stateTransitionThreshold": 0.062183,
+  "orderQuantityInUSD": 2333.224479,
+  "orderQuantity": 41,
+  "contract": {
+    "symbol": "LTC",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "LTC",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/CSO_LTC_OPTIMIZED",
+  "ledgerContextCollection": "CSO_LTC_OPTIMIZED_context"
+}

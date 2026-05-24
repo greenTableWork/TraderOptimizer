@@ -122,6 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
     existing_parser.add_argument("--max-bars", type=int, default=5000)
     existing_parser.add_argument("--train-fraction", type=float, default=0.70)
     existing_parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel strategy optimizations. Default 0 uses up to 4 workers.",
+    )
+    existing_parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -268,6 +274,7 @@ def optimize_existing(args: argparse.Namespace) -> int:
         print(f"  candidates: {len(candidates)}")
         print(f"  trials_per_candidate: {args.trials}")
         print(f"  max_bars: {args.max_bars}")
+        print(f"  workers: {args.workers or 'auto'}")
         print(f"  output_dir: {output_dir}")
         if args.plan_path:
             print(f"  plan_path: {args.plan_path.resolve()}")
@@ -282,28 +289,20 @@ def optimize_existing(args: argparse.Namespace) -> int:
         preferred_bar_size=args.bar_size,
         train_fraction=args.train_fraction,
         verbose=verbose,
+        export_config_dir=args.export_config_dir.resolve()
+        if args.export_config_dir
+        else None,
+        workers=args.workers,
     )
-    if args.export_config_dir:
-        settings = BatchSettings(
-            pg_settings=settings.pg_settings,
-            optuna_storage_url=settings.optuna_storage_url,
-            output_dir=settings.output_dir,
-            trials=settings.trials,
-            max_bars=settings.max_bars,
-            preferred_bar_size=settings.preferred_bar_size,
-            train_fraction=settings.train_fraction,
-            verbose=settings.verbose,
-            export_config_dir=args.export_config_dir.resolve(),
-        )
     if args.plan_path:
         write_optimization_plan(candidates, settings, args.plan_path.resolve())
     results = optimize_candidates(candidates, settings)
     ok = sum(1 for result in results if result.status == "ok")
-    skipped = len(results) - ok
+    not_exported = len(results) - ok
     if verbose:
         print("TraderOptimizer batch finished")
-        print(f"  optimized: {ok}")
-        print(f"  skipped: {skipped}")
+        print(f"  benchmark_passing: {ok}")
+        print(f"  not_exported: {not_exported}")
         print(f"  summary_json: {output_dir / 'batch_summary.json'}")
         print(f"  summary_csv: {output_dir / 'batch_summary.csv'}")
         if args.export_config_dir:

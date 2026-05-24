@@ -1,0 +1,180 @@
+{
+  "configs": [
+    {
+      "name": "constant_step_offset_ltc_tws_postgres",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "LTC"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/constant_step_offset_ltc_tws_postgres.json",
+      "best_value": 0.007685818253642376,
+      "strategy_return_pct": 0.02945744567323583,
+      "benchmark_return_pct": 0.02493165837358841,
+      "excess_return_pct": 0.004525787299647421,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_ltc_tws_postgres.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_ltc_tws_postgres/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_ltc_tws_postgres/best_summary.json"
+    },
+    {
+      "name": "ts002_ema_cross_tsla_postgres",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-002",
+      "symbols": [
+        "TSLA"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts002_ema_cross_tsla_postgres.json",
+      "best_value": 0.1844766652217834,
+      "strategy_return_pct": 0.509077163063554,
+      "benchmark_return_pct": 0.21200782189556555,
+      "excess_return_pct": 0.29706934116798844,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/ts002_ema_cross_tsla_postgres.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/ts002_ema_cross_tsla_postgres/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/ts002_ema_cross_tsla_postgres/best_summary.json"
+    },
+    {
+      "name": "ts004_opening_range_breakout_aapl_postgres",
+      "strategy_type": "TechnicalSignal",
+      "variant": "TS-004",
+      "symbols": [
+        "AAPL"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/configs/backtesting/strategy_suite/ts004_opening_range_breakout_aapl_postgres.json",
+      "best_value": -0.22552119542435642,
+      "strategy_return_pct": 0.28168366493897323,
+      "benchmark_return_pct": 0.25484868751044965,
+      "excess_return_pct": 0.026834977428523588,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/ts004_opening_range_breakout_aapl_postgres.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/ts004_opening_range_breakout_aapl_postgres/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/ts004_opening_range_breakout_aapl_postgres/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_amzn_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "AMZN"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_amzn_tws.json",
+      "best_value": 0.04080092068755859,
+      "strategy_return_pct": 0.1825204843171024,
+      "benchmark_return_pct": 0.12834496693638767,
+      "excess_return_pct": 0.054175517380714744,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_amzn_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_amzn_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_amzn_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_avgo_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "AVGO"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_avgo_tws.json",
+      "best_value": 0.05612412817445739,
+      "strategy_return_pct": 0.3503400826662483,
+      "benchmark_return_pct": 0.26666599775127475,
+      "excess_return_pct": 0.08367408491497352,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_avgo_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_avgo_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_avgo_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_brk_b_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "BRK.B"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_brk_b_tws.json",
+      "best_value": 0.042250537556200604,
+      "strategy_return_pct": 0.01573593393385146,
+      "benchmark_return_pct": -0.034801782539499004,
+      "excess_return_pct": 0.050537716473350466,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_brk_b_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_brk_b_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_brk_b_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_cost_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "COST"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_cost_tws.json",
+      "best_value": 0.022093792526189173,
+      "strategy_return_pct": 0.12462644557533989,
+      "benchmark_return_pct": 0.08869080670777993,
+      "excess_return_pct": 0.03593563886755996,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_cost_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_cost_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_cost_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_jpm_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "JPM"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_jpm_tws.json",
+      "best_value": 0.01027742026560438,
+      "strategy_return_pct": 0.019611342705198823,
+      "benchmark_return_pct": 0.0037457157623533885,
+      "excess_return_pct": 0.015865626942845434,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_jpm_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_jpm_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_jpm_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_meta_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "META"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_meta_tws.json",
+      "best_value": 0.14757862273095662,
+      "strategy_return_pct": 0.03451810543108196,
+      "benchmark_return_pct": -0.1836982266487822,
+      "excess_return_pct": 0.21821633207986416,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_meta_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_meta_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_meta_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_msft_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "MSFT"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_msft_tws.json",
+      "best_value": 0.1421418844758876,
+      "strategy_return_pct": 0.04675563946900097,
+      "benchmark_return_pct": -0.15514493633694282,
+      "excess_return_pct": 0.20190057580594378,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_msft_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_msft_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_msft_tws/best_summary.json"
+    },
+    {
+      "name": "constant_step_offset_v_tws",
+      "strategy_type": "ConstantStepOffset",
+      "variant": "CSO",
+      "symbols": [
+        "V"
+      ],
+      "source_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderLab/configs/backtests/ibkr_stock_stress/constant_step_offset_v_tws.json",
+      "best_value": 0.09498050073436828,
+      "strategy_return_pct": 0.08387317116164299,
+      "benchmark_return_pct": -0.061065045153076404,
+      "excess_return_pct": 0.1449382163147194,
+      "exported_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent/constant_step_offset_v_tws.optimized.json",
+      "run_config": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_v_tws/best_config.json",
+      "summary": "/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z/constant_step_offset_v_tws/best_summary.json"
+    }
+  ]
+}
