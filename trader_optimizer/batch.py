@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,8 @@ from trader_optimizer.simple_strategies import (
     SimpleResult,
     bollinger_breakout_directions,
     ema_cross_directions,
+    simulate_buy_and_hold,
+    simulate_equal_weight_buy_and_hold,
     momentum_factor_weights,
     opening_range_breakout_directions,
     pairs_trading_weights,
@@ -49,6 +53,7 @@ class BatchSettings:
     train_fraction: float
     verbose: bool
     export_config_dir: Path | None = None
+    workers: int = 0
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,9 @@ class BatchItemResult:
     best_config: str | None = None
     summary: str | None = None
     best_value: float | None = None
+    strategy_return_pct: float | None = None
+    benchmark_return_pct: float | None = None
+    excess_return_pct: float | None = None
     reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -74,30 +82,88 @@ def optimize_candidates(
     settings: BatchSettings,
 ) -> list[BatchItemResult]:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
-    results: list[BatchItemResult] = []
-    for index, candidate in enumerate(candidates, start=1):
-        if settings.verbose:
-            print(
-                f"[{index}/{len(candidates)}] {candidate.name} "
-                f"{candidate.strategy_type} {candidate.symbols}"
-            )
-        try:
-            if candidate.strategy_type == "ConstantStepOffset":
-                result = _optimize_cso(candidate, settings)
-            elif candidate.strategy_type in {"MovingAverageCross", "TechnicalSignal"}:
-                result = _optimize_single_signal(candidate, settings)
-            elif candidate.strategy_type == "PortfolioAllocation":
-                result = _optimize_portfolio(candidate, settings)
-            else:
-                result = _skipped(candidate, f"Unsupported strategy_type {candidate.strategy_type}")
-        except Exception as exc:  # noqa: BLE001 - batch summaries should retain failures.
-            result = _skipped(candidate, str(exc))
-        results.append(result)
+    worker_count = _resolve_workers(settings.workers, len(candidates))
+
+    if worker_count == 1:
+        results = []
+        for index, candidate in enumerate(candidates, start=1):
+            _print_candidate_start(index, len(candidates), candidate, settings)
+            result = _optimize_candidate(candidate, settings)
+            _print_candidate_finish(index, len(candidates), result, settings)
+            results.append(result)
+    else:
+        results_by_index: list[BatchItemResult | None] = [None] * len(candidates)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {}
+            for index, candidate in enumerate(candidates, start=1):
+                _print_candidate_start(index, len(candidates), candidate, settings)
+                future = executor.submit(_optimize_candidate, candidate, settings)
+                futures[future] = index
+            for future in as_completed(futures):
+                index = futures[future]
+                result = future.result()
+                results_by_index[index - 1] = result
+                _print_candidate_finish(index, len(candidates), result, settings)
+        results = [result for result in results_by_index if result is not None]
 
     _write_batch_summary(settings, results)
     if settings.export_config_dir:
         _export_best_configs(settings.export_config_dir, results)
     return results
+
+
+def _resolve_workers(requested_workers: int, candidate_count: int) -> int:
+    if candidate_count <= 1:
+        return 1
+    if requested_workers > 0:
+        return min(requested_workers, candidate_count)
+    return min(candidate_count, max(1, min(os.cpu_count() or 1, 4)))
+
+
+def _optimize_candidate(
+    candidate: StrategyCandidate,
+    settings: BatchSettings,
+) -> BatchItemResult:
+    try:
+        if candidate.strategy_type == "ConstantStepOffset":
+            return _optimize_cso(candidate, settings)
+        if candidate.strategy_type in {"MovingAverageCross", "TechnicalSignal"}:
+            return _optimize_single_signal(candidate, settings)
+        if candidate.strategy_type == "PortfolioAllocation":
+            return _optimize_portfolio(candidate, settings)
+        return _skipped(candidate, f"Unsupported strategy_type {candidate.strategy_type}")
+    except Exception as exc:  # noqa: BLE001 - batch summaries should retain failures.
+        return _skipped(candidate, str(exc))
+
+
+def _print_candidate_start(
+    index: int,
+    total: int,
+    candidate: StrategyCandidate,
+    settings: BatchSettings,
+) -> None:
+    if not settings.verbose:
+        return
+    print(
+        f"[{index}/{total}] start {candidate.name} "
+        f"{candidate.strategy_type} {candidate.symbols}"
+    )
+
+
+def _print_candidate_finish(
+    index: int,
+    total: int,
+    result: BatchItemResult,
+    settings: BatchSettings,
+) -> None:
+    if not settings.verbose:
+        return
+    suffix = ""
+    if result.excess_return_pct is not None:
+        suffix = f" excess_return_pct={result.excess_return_pct:.6f}"
+    elif result.reason:
+        suffix = f" reason={result.reason}"
+    print(f"[{index}/{total}] finish {result.name} status={result.status}{suffix}")
 
 
 def write_optimization_plan(
@@ -125,6 +191,7 @@ def write_optimization_plan(
         f"- Max bars per symbol: `{settings.max_bars}`",
         f"- Train fraction: `{settings.train_fraction}`",
         f"- Preferred bar size: `{settings.preferred_bar_size or 'auto'}`",
+        f"- Workers: `{_resolve_workers(settings.workers, len(candidates))}`",
         "",
         "## Search Spaces",
         "",
@@ -139,7 +206,9 @@ def write_optimization_plan(
         "",
         "## Objective",
         "",
-        "The objective blends train and validation simulated return while penalizing open inventory, drawdown, and no-trade configurations. "
+        "The objective blends train and validation excess return versus a buy-and-hold benchmark for the same symbol set, "
+        "then penalizes open inventory, drawdown, and no-trade configurations. "
+        "Only configs that beat buy-and-hold over the full simulated window are exported. "
         "The simulator includes the local stock commission model and uses close-price fills for the non-CSO strategy families.",
         "",
         "## Strategy Coverage",
@@ -195,17 +264,24 @@ def _optimize_cso(
             verbose=False,
         ),
     )
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    benchmark = summary.get("benchmark", {}).get("all", {})
+    status, reason = _benchmark_status(benchmark)
     return BatchItemResult(
         name=candidate.name,
         strategy_type=candidate.strategy_type,
         variant=candidate.variant,
         symbols=candidate.symbols,
         source_config=str(candidate.path),
-        status="ok",
+        status=status,
         output_dir=str(output_dir),
         best_config=str(artifacts.config_path),
         summary=str(artifacts.summary_path),
         best_value=artifacts.best_value,
+        strategy_return_pct=_float_or_none(benchmark.get("strategy_return_pct")),
+        benchmark_return_pct=_float_or_none(benchmark.get("benchmark_return_pct")),
+        excess_return_pct=_float_or_none(benchmark.get("excess_return_pct")),
+        reason=reason,
     )
 
 
@@ -264,6 +340,25 @@ def _optimize_single_signal(
         validation_bars,
         study.best_trial,
     )
+    train_benchmark = simulate_buy_and_hold(
+        train_bars,
+        allocated_capital=train_result.allocated_capital,
+    )
+    validation_benchmark = simulate_buy_and_hold(
+        validation_bars,
+        allocated_capital=validation_result.allocated_capital,
+    )
+    all_benchmark = simulate_buy_and_hold(
+        bars,
+        allocated_capital=all_result.allocated_capital,
+    )
+    benchmark = {
+        "name": "buy_and_hold",
+        "train": _benchmark_comparison(train_result, train_benchmark),
+        "validation": _benchmark_comparison(validation_result, validation_benchmark),
+        "all": _benchmark_comparison(all_result, all_benchmark),
+    }
+    status, reason = _benchmark_status(benchmark["all"])
     best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED"
     best_config["ledgerContextCollection"] = f"{candidate.name}_OPTIMIZED_context"
 
@@ -286,6 +381,7 @@ def _optimize_single_signal(
                 "validation": validation_result.to_dict(),
                 "all": all_result.to_dict(),
             },
+            "benchmark": benchmark,
             "hyperparameters": study.best_trial.params,
         },
     )
@@ -296,11 +392,15 @@ def _optimize_single_signal(
         variant=candidate.variant,
         symbols=candidate.symbols,
         source_config=str(candidate.path),
-        status="ok",
+        status=status,
         output_dir=str(output_dir),
         best_config=str(config_path),
         summary=str(summary_path),
         best_value=float(study.best_value),
+        strategy_return_pct=all_result.return_pct,
+        benchmark_return_pct=all_benchmark.return_pct,
+        excess_return_pct=all_result.return_pct - all_benchmark.return_pct,
+        reason=reason,
     )
 
 
@@ -316,11 +416,30 @@ def _single_signal_objective(
         validation_bars,
         trial,
     )
+    train_benchmark = simulate_buy_and_hold(
+        train_bars,
+        allocated_capital=train_result.allocated_capital,
+    )
+    validation_benchmark = simulate_buy_and_hold(
+        validation_bars,
+        allocated_capital=validation_result.allocated_capital,
+    )
+    train_excess_return = train_result.return_pct - train_benchmark.return_pct
+    validation_excess_return = (
+        validation_result.return_pct - validation_benchmark.return_pct
+    )
     trial.set_user_attr("train_net_pnl", train_result.net_pnl)
     trial.set_user_attr("train_return_pct", train_result.return_pct)
+    trial.set_user_attr("train_buy_hold_return_pct", train_benchmark.return_pct)
+    trial.set_user_attr("train_excess_return_pct", train_excess_return)
     trial.set_user_attr("train_fills", train_result.fills)
     trial.set_user_attr("validation_net_pnl", validation_result.net_pnl)
     trial.set_user_attr("validation_return_pct", validation_result.return_pct)
+    trial.set_user_attr(
+        "validation_buy_hold_return_pct",
+        validation_benchmark.return_pct,
+    )
+    trial.set_user_attr("validation_excess_return_pct", validation_excess_return)
     trial.set_user_attr("validation_fills", validation_result.fills)
     trial.set_user_attr(
         "validation_final_position_value",
@@ -339,8 +458,8 @@ def _single_signal_objective(
         * 0.10
     )
     return (
-        train_result.return_pct * 0.70
-        + validation_result.return_pct * 0.30
+        train_excess_return * 0.70
+        + validation_excess_return * 0.30
         - inventory_penalty
         - drawdown_penalty
         - no_trade_penalty
@@ -479,6 +598,25 @@ def _optimize_portfolio(
         validation_symbol_bars,
         study.best_trial,
     )
+    train_benchmark = simulate_equal_weight_buy_and_hold(
+        train_symbol_bars,
+        train_result.allocated_capital,
+    )
+    validation_benchmark = simulate_equal_weight_buy_and_hold(
+        validation_symbol_bars,
+        validation_result.allocated_capital,
+    )
+    all_benchmark = simulate_equal_weight_buy_and_hold(
+        symbol_bars,
+        all_result.allocated_capital,
+    )
+    benchmark = {
+        "name": "equal_weight_buy_and_hold",
+        "train": _benchmark_comparison(train_result, train_benchmark),
+        "validation": _benchmark_comparison(validation_result, validation_benchmark),
+        "all": _benchmark_comparison(all_result, all_benchmark),
+    }
+    status, reason = _benchmark_status(benchmark["all"])
     best_config["ledgerPath"] = f"data/TraderLedger/{candidate.name}_OPTIMIZED"
     best_config["ledgerContextCollection"] = f"{candidate.name}_OPTIMIZED_context"
     config_path = output_dir / "best_config.json"
@@ -500,6 +638,7 @@ def _optimize_portfolio(
                 "validation": validation_result.to_dict(),
                 "all": all_result.to_dict(),
             },
+            "benchmark": benchmark,
             "hyperparameters": study.best_trial.params,
         },
     )
@@ -510,11 +649,15 @@ def _optimize_portfolio(
         variant=candidate.variant,
         symbols=candidate.symbols,
         source_config=str(candidate.path),
-        status="ok",
+        status=status,
         output_dir=str(output_dir),
         best_config=str(config_path),
         summary=str(summary_path),
         best_value=float(study.best_value),
+        strategy_return_pct=all_result.return_pct,
+        benchmark_return_pct=all_benchmark.return_pct,
+        excess_return_pct=all_result.return_pct - all_benchmark.return_pct,
+        reason=reason,
     )
 
 
@@ -534,11 +677,30 @@ def _portfolio_objective(
         validation_symbol_bars,
         trial,
     )
+    train_benchmark = simulate_equal_weight_buy_and_hold(
+        train_symbol_bars,
+        train_result.allocated_capital,
+    )
+    validation_benchmark = simulate_equal_weight_buy_and_hold(
+        validation_symbol_bars,
+        validation_result.allocated_capital,
+    )
+    train_excess_return = train_result.return_pct - train_benchmark.return_pct
+    validation_excess_return = (
+        validation_result.return_pct - validation_benchmark.return_pct
+    )
     trial.set_user_attr("train_net_pnl", train_result.net_pnl)
     trial.set_user_attr("train_return_pct", train_result.return_pct)
+    trial.set_user_attr("train_buy_hold_return_pct", train_benchmark.return_pct)
+    trial.set_user_attr("train_excess_return_pct", train_excess_return)
     trial.set_user_attr("train_fills", train_result.fills)
     trial.set_user_attr("validation_net_pnl", validation_result.net_pnl)
     trial.set_user_attr("validation_return_pct", validation_result.return_pct)
+    trial.set_user_attr(
+        "validation_buy_hold_return_pct",
+        validation_benchmark.return_pct,
+    )
+    trial.set_user_attr("validation_excess_return_pct", validation_excess_return)
     trial.set_user_attr("validation_fills", validation_result.fills)
     trial.set_user_attr(
         "validation_final_position_value",
@@ -556,8 +718,8 @@ def _portfolio_objective(
     )
     no_trade_penalty = 0.02 if train_result.fills + validation_result.fills == 0 else 0.0
     return (
-        train_result.return_pct * 0.70
-        + validation_result.return_pct * 0.30
+        train_excess_return * 0.70
+        + validation_excess_return * 0.30
         - inventory_penalty
         - drawdown_penalty
         - no_trade_penalty
@@ -626,6 +788,45 @@ def _portfolio_config_and_result(
     return config, result
 
 
+def _benchmark_comparison(
+    strategy_result: Any,
+    benchmark_result: SimpleResult,
+) -> dict[str, object]:
+    return {
+        "benchmark": benchmark_result.to_dict(),
+        "strategy_return_pct": strategy_result.return_pct,
+        "benchmark_return_pct": benchmark_result.return_pct,
+        "excess_return_pct": strategy_result.return_pct - benchmark_result.return_pct,
+        "strategy_net_pnl": strategy_result.net_pnl,
+        "benchmark_net_pnl": benchmark_result.net_pnl,
+        "excess_net_pnl": strategy_result.net_pnl - benchmark_result.net_pnl,
+    }
+
+
+def _benchmark_status(comparison: dict[str, object]) -> tuple[str, str | None]:
+    strategy_return = _float_or_none(comparison.get("strategy_return_pct"))
+    benchmark_return = _float_or_none(comparison.get("benchmark_return_pct"))
+    excess_return = _float_or_none(comparison.get("excess_return_pct"))
+    if excess_return is not None and excess_return > 0.0:
+        return "ok", None
+    if strategy_return is None or benchmark_return is None:
+        return "benchmark_failed", "Missing buy-and-hold benchmark comparison"
+    return (
+        "benchmark_failed",
+        "Best simulated return "
+        f"{strategy_return:.6f} did not beat buy-and-hold {benchmark_return:.6f}",
+    )
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _skipped(candidate: StrategyCandidate, reason: str) -> BatchItemResult:
     return BatchItemResult(
         name=candidate.name,
@@ -659,6 +860,9 @@ def _write_batch_summary(
                 "symbols",
                 "status",
                 "best_value",
+                "strategy_return_pct",
+                "benchmark_return_pct",
+                "excess_return_pct",
                 "best_config",
                 "summary",
                 "reason",
@@ -678,6 +882,8 @@ def _export_best_configs(
     results: list[BatchItemResult],
 ) -> None:
     export_dir.mkdir(parents=True, exist_ok=True)
+    for stale_config in export_dir.glob("*.optimized.json"):
+        stale_config.unlink()
     index: list[dict[str, object]] = []
     for result in results:
         if result.status != "ok" or not result.best_config:
@@ -693,6 +899,9 @@ def _export_best_configs(
                 "symbols": list(result.symbols),
                 "source_config": result.source_config,
                 "best_value": result.best_value,
+                "strategy_return_pct": result.strategy_return_pct,
+                "benchmark_return_pct": result.benchmark_return_pct,
+                "excess_return_pct": result.excess_return_pct,
                 "exported_config": str(exported),
                 "run_config": result.best_config,
                 "summary": result.summary,

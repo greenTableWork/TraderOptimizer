@@ -1,0 +1,23 @@
+{
+  "strategy_type": "ConstantStepOffset",
+  "baseline": 289.46,
+  "stepDelta": 0.405219,
+  "executionLimitOffset": 7.293951,
+  "stateTransitionThreshold": 0.305902,
+  "orderQuantityInUSD": 2063.624189,
+  "orderQuantity": 7,
+  "contract": {
+    "symbol": "JPM",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "JPM",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/CSO_JPM_OPTIMIZED",
+  "ledgerContextCollection": "CSO_JPM_OPTIMIZED_context"
+}

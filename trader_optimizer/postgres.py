@@ -174,9 +174,17 @@ def ensure_optimizer_schema(conn) -> None:
                 best_config TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL DEFAULT '',
                 best_value DOUBLE PRECISION,
+                strategy_return_pct DOUBLE PRECISION,
+                benchmark_return_pct DOUBLE PRECISION,
+                excess_return_pct DOUBLE PRECISION,
                 reason TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+
+            ALTER TABLE optimizer_batch_results
+                ADD COLUMN IF NOT EXISTS strategy_return_pct DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS benchmark_return_pct DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS excess_return_pct DOUBLE PRECISION;
 
             ALTER TABLE optimizer_fills
                 ALTER COLUMN quantity TYPE trader_position_quantity
@@ -356,6 +364,9 @@ def insert_optimizer_batch_results(conn, batch_name: str, results: list[Any]) ->
             result.best_config or "",
             result.summary or "",
             result.best_value,
+            result.strategy_return_pct,
+            result.benchmark_return_pct,
+            result.excess_return_pct,
             result.reason or "",
         )
         for result in results
@@ -368,7 +379,8 @@ def insert_optimizer_batch_results(conn, batch_name: str, results: list[Any]) ->
             """
             INSERT INTO optimizer_batch_results (
                 batch_name, name, strategy_type, variant, symbols, source_config,
-                status, output_dir, best_config, summary, best_value, reason
+                status, output_dir, best_config, summary, best_value,
+                strategy_return_pct, benchmark_return_pct, excess_return_pct, reason
             )
             VALUES %s
             """,

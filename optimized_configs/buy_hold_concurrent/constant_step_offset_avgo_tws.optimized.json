@@ -1,0 +1,23 @@
+{
+  "strategy_type": "ConstantStepOffset",
+  "baseline": 318.55,
+  "stepDelta": 2.406005,
+  "executionLimitOffset": 9.62402,
+  "stateTransitionThreshold": 0.790698,
+  "orderQuantityInUSD": 1485.991981,
+  "orderQuantity": 5,
+  "contract": {
+    "symbol": "AVGO",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "AVGO",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/CSO_AVGO_OPTIMIZED",
+  "ledgerContextCollection": "CSO_AVGO_OPTIMIZED_context"
+}

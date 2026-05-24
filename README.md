@@ -103,6 +103,7 @@ trader-optimizer optimize-existing \
   --trader-root .. \
   --trials 25 \
   --max-bars 5000 \
+  --workers 4 \
   --output-dir runs/batch_existing \
   --plan-path reports/batch_optimization_plan.md \
   --export-config-dir optimized_configs/batch_existing
@@ -113,6 +114,10 @@ The batch command writes one folder per strategy plus:
 - `runs/batch_existing/batch_summary.json`
 - `runs/batch_existing/batch_summary.csv`
 - `optimizer_batch_results` rows in PostgreSQL
+
+Candidate strategies run concurrently by default, up to 4 workers. Pass
+`--workers 1` for serial execution or a larger value when PostgreSQL and the
+local machine can absorb more parallel studies.
 
 The current discovery path covers:
 
@@ -131,6 +136,7 @@ trader-optimizer optimize-existing \
   --exclude-strategy-type ConstantStepOffset \
   --trials 50 \
   --max-bars 5000 \
+  --workers 4 \
   --output-dir runs/non_cso_existing \
   --plan-path reports/non_cso_optimization_plan.md \
   --export-config-dir optimized_configs/non_cso
@@ -175,7 +181,8 @@ already parses:
 - `PortfolioAllocation` QS-001/QS-002/PAIRS-001: volatility, momentum, pair
   z-score, and gross exposure controls.
 
-The objective is a blended train/validation return score with penalties for
-configs that do not trade or that finish with too much marked open inventory.
-That prevents the study from picking a config only because it holds a large
-unclosed position at the final bar.
+The objective is a blended train/validation excess-return score against a
+buy-and-hold benchmark for the same symbol set, with penalties for configs that
+do not trade or that finish with too much marked open inventory. Batch summaries
+record strategy return, buy-and-hold return, and excess return. Only configs
+that beat buy-and-hold over the full simulated window are exported.

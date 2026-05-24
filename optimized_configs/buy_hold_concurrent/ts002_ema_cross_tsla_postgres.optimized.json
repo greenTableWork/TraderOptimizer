@@ -1,0 +1,21 @@
+{
+  "strategy_type": "TechnicalSignal",
+  "signal_type": "TS-002",
+  "fastWindow": 15,
+  "slowWindow": 29,
+  "orderQuantity": 18.0,
+  "contract": {
+    "symbol": "TSLA",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "TSLA",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/ts002_ema_cross_tsla_postgres_OPTIMIZED",
+  "ledgerContextCollection": "ts002_ema_cross_tsla_postgres_OPTIMIZED_context"
+}

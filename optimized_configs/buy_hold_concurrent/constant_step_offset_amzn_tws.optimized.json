@@ -1,0 +1,23 @@
+{
+  "strategy_type": "ConstantStepOffset",
+  "baseline": 212.9,
+  "stepDelta": 2.17453,
+  "executionLimitOffset": 8.698121,
+  "stateTransitionThreshold": 1.278769,
+  "orderQuantityInUSD": 547.235071,
+  "orderQuantity": 3,
+  "contract": {
+    "symbol": "AMZN",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "AMZN",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/CSO_AMZN_OPTIMIZED",
+  "ledgerContextCollection": "CSO_AMZN_OPTIMIZED_context"
+}

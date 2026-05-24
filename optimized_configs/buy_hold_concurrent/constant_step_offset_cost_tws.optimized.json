@@ -1,0 +1,23 @@
+{
+  "strategy_type": "ConstantStepOffset",
+  "baseline": 882.29,
+  "stepDelta": 1.260756,
+  "executionLimitOffset": 23.95437,
+  "stateTransitionThreshold": 0.653019,
+  "orderQuantityInUSD": 452.255871,
+  "orderQuantity": 1.0,
+  "contract": {
+    "symbol": "COST",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "price_contract": {
+    "symbol": "COST",
+    "secType": "STOCK",
+    "currency": "USD",
+    "exchange": "BACKTESTER"
+  },
+  "ledgerPath": "data/TraderLedger/CSO_COST_OPTIMIZED",
+  "ledgerContextCollection": "CSO_COST_OPTIMIZED_context"
+}
