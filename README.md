@@ -108,7 +108,7 @@ trader-optimizer optimize-existing \
   --workers 4 \
   --output-dir runs/batch_existing \
   --plan-path reports/batch_optimization_plan.md \
-  --export-config-dir optimized_configs/batch_existing
+  --export-config-dir ../TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/batch_existing
 ```
 
 The batch command writes one folder per strategy plus:
@@ -125,8 +125,8 @@ local machine can absorb more parallel studies.
 
 The current discovery path covers:
 
-- `TraderCore/configs/backtesting/**/*.json`
-- `TraderLab/configs/backtests/ibkr_stock_stress/*.json`
+- `TraderCore/TraderLogicConfigs/TraderCore/configs/backtesting/**/*.json`
+- `TraderCore/TraderLogicConfigs/TraderLab/configs/backtests/**/*.json`
 
 It supports `ConstantStepOffset`, `MovingAverageCross`, `TechnicalSignal`, and
 `PortfolioAllocation` configs with PostgreSQL bars. Missing data or unsupported
@@ -143,14 +143,14 @@ trader-optimizer optimize-existing \
   --workers 4 \
   --output-dir runs/non_cso_existing \
   --plan-path reports/non_cso_optimization_plan.md \
-  --export-config-dir optimized_configs/non_cso
+  --export-config-dir ../TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/non_cso
 ```
 
 That writes a generated optimization plan plus stable config files:
 
 - `reports/non_cso_optimization_plan.md`
-- `optimized_configs/non_cso/*.optimized.json`
-- `optimized_configs/non_cso/index.json`
+- `../TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/non_cso/*.optimized.json`
+- `../TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/non_cso/index.json`
 
 ## Notebook report
 

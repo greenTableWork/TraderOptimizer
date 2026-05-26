@@ -8,7 +8,7 @@ It describes what Optuna will tune, which PostgreSQL data profile will be used, 
 - PostgreSQL data: `postgresql://vrajpandya@127.0.0.1:5432/trader`
 - Optuna storage: `postgresql+psycopg2://vrajpandya@127.0.0.1:5432/trader`
 - Output directory: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/buy_hold_concurrent_20260524T0225Z`
-- Exported configs: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/buy_hold_concurrent`
+- Exported configs: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/buy_hold_concurrent`
 - Trials per config: `40`
 - Max bars per symbol: `5000`
 - Train fraction: `0.7`

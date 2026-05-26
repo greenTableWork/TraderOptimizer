@@ -17,8 +17,8 @@ class StrategyCandidate:
 
 
 DEFAULT_CONFIG_GLOBS = (
-    "TraderCore/configs/backtesting/**/*.json",
-    "TraderLab/configs/backtests/ibkr_stock_stress/*.json",
+    "TraderCore/TraderLogicConfigs/TraderCore/configs/backtesting/**/*.json",
+    "TraderCore/TraderLogicConfigs/TraderLab/configs/backtests/**/*.json",
 )
 
 

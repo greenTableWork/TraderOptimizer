@@ -8,7 +8,7 @@ It describes what Optuna will tune, which PostgreSQL data profile will be used, 
 - PostgreSQL data: `historical_bars` in the local `trader` database
 - Optuna storage: PostgreSQL
 - Output directory: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/runs/non_cso_existing`
-- Exported configs: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderOptimizer/optimized_configs/non_cso`
+- Exported configs: `/Users/vrajpandya/.openclaw/workspace/Trader/TraderCore/TraderLogicConfigs/TraderOptimizer/optimized_configs/non_cso`
 - Trials per config: `50`
 - Max bars per symbol: `5000`
 - Train fraction: `0.7`
