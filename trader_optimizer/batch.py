@@ -4,12 +4,20 @@ import json
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import optuna
 
+from trader_optimizer.backtester import (
+    BackTesterSettings,
+    BacktestProfile,
+    BacktestValidationResult,
+    prepare_backtester,
+    profile_for_bars,
+    validate_with_backtester,
+)
 from trader_optimizer.config import write_json
 from trader_optimizer.data import (
     Bar,
@@ -55,6 +63,9 @@ class BatchSettings:
     verbose: bool
     export_config_dir: Path | None = None
     workers: int = 0
+    backtester_settings: BackTesterSettings | None = None
+    start_utc: str | None = None
+    end_utc: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +94,11 @@ def optimize_candidates(
     settings: BatchSettings,
 ) -> list[BatchItemResult]:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
+    if settings.backtester_settings is not None:
+        settings = replace(
+            settings,
+            backtester_settings=prepare_backtester(settings.backtester_settings),
+        )
     worker_count = _resolve_workers(settings.workers, len(candidates))
 
     if worker_count == 1:
@@ -190,6 +206,8 @@ def write_optimization_plan(
         else "- Exported configs: not requested",
         f"- Trials per config: `{settings.trials}`",
         f"- Max bars per symbol: `{settings.max_bars}`",
+        f"- Start UTC: `{settings.start_utc or 'auto'}`",
+        f"- End UTC: `{settings.end_utc or 'auto'}`",
         f"- Train fraction: `{settings.train_fraction}`",
         f"- Preferred bar size: `{settings.preferred_bar_size or 'auto'}`",
         f"- Workers: `{_resolve_workers(settings.workers, len(candidates))}`",
@@ -209,8 +227,8 @@ def write_optimization_plan(
         "",
         "The objective blends train and validation excess return versus a buy-and-hold benchmark for the same symbol set, "
         "then penalizes open inventory, drawdown, and no-trade configurations. "
-        "Only configs that beat buy-and-hold over the full simulated window are exported. "
-        "The simulator includes the local stock commission model and uses close-price fills for the non-CSO strategy families.",
+        "Every exported config is validated with TraderCore BackTester and must have positive return, beat SPX, "
+        "and beat same-stock buy-and-hold over the BackTester validation window.",
         "",
         "## Strategy Coverage",
         "",
@@ -224,9 +242,9 @@ def write_optimization_plan(
             "",
             "## Validation Path",
             "",
-            "1. Inspect the generated `best_summary.json` and PostgreSQL `optimizer_trials` rows for each strategy.",
-            "2. Run promising `best_config.json` files through TraderCore `BackTester`; the Python simulator is a fast search harness, not the execution source of truth.",
-            "3. Promote only configs that survive the C++ backtest with acceptable fees, trade count, and drawdown.",
+            "1. Inspect the generated `best_summary.json`, `backtester` payload, and PostgreSQL `optimizer_trials` rows for each strategy.",
+            "2. Promote only configs with a passing BackTester validation status.",
+            "3. Use smaller `--max-bars`, `--start-utc`, or `--end-utc` windows when the BackTester validation cost is too high.",
             "",
         ]
     )
@@ -249,6 +267,8 @@ def _optimize_cso(
         bar_size=profile.bar_size,
         what_to_show=profile.what_to_show,
         use_rth=profile.use_rth,
+        start_utc=settings.start_utc,
+        end_utc=settings.end_utc,
         max_bars=settings.max_bars,
     )
     output_dir = settings.output_dir / candidate.name
@@ -263,11 +283,31 @@ def _optimize_cso(
             pg_settings=settings.pg_settings,
             min_trades=2,
             verbose=False,
+            backtester_settings=settings.backtester_settings,
         ),
     )
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     benchmark = summary.get("benchmark", {}).get("all", {})
     status, reason = _benchmark_status(benchmark)
+    backtester_validation = summary.get("backtester")
+    if isinstance(backtester_validation, dict):
+        status = str(backtester_validation.get("status") or status)
+        reason = (
+            str(backtester_validation.get("reason"))
+            if backtester_validation.get("reason")
+            else reason
+        )
+        backtester_benchmarks = backtester_validation.get("benchmarks")
+        if isinstance(backtester_benchmarks, dict):
+            same_stock = backtester_benchmarks.get("same_stock_buy_and_hold")
+            if isinstance(same_stock, dict):
+                benchmark = {
+                    "strategy_return_pct": backtester_validation.get("strategy", {}).get("return_pct")
+                    if isinstance(backtester_validation.get("strategy"), dict)
+                    else benchmark.get("strategy_return_pct"),
+                    "benchmark_return_pct": same_stock.get("benchmark_return_pct"),
+                    "excess_return_pct": same_stock.get("excess_return_pct"),
+                }
     return BatchItemResult(
         name=candidate.name,
         strategy_type=candidate.strategy_type,
@@ -302,6 +342,8 @@ def _optimize_single_signal(
         bar_size=profile.bar_size,
         what_to_show=profile.what_to_show,
         use_rth=profile.use_rth,
+        start_utc=settings.start_utc,
+        end_utc=settings.end_utc,
         max_bars=settings.max_bars,
     ).bars
     train_bars, validation_bars = split_train_validation(
@@ -373,6 +415,22 @@ def _optimize_single_signal(
     }
     hyperparameters = dict(study.best_trial.params)
     write_json(config_path, best_config)
+    backtester_validation = _validate_batch_backtester(
+        candidate=candidate,
+        config_path=config_path,
+        profile=profile_for_bars(
+            bar_size=profile.bar_size,
+            what_to_show=profile.what_to_show,
+            use_rth=profile.use_rth,
+            symbol_bars={symbol: bars},
+        ),
+        symbol_bars={symbol: bars},
+        settings=settings,
+        output_dir=output_dir,
+    )
+    if backtester_validation is not None:
+        status = backtester_validation.status
+        reason = backtester_validation.reason
     write_json(
         summary_path,
         {
@@ -385,6 +443,9 @@ def _optimize_single_signal(
             "data_profile": profile.__dict__,
             "metrics": metrics,
             "benchmark": benchmark,
+            "backtester": backtester_validation.to_dict()
+            if backtester_validation is not None
+            else None,
             "hyperparameters": hyperparameters,
         },
     )
@@ -423,9 +484,21 @@ def _optimize_single_signal(
         best_config=str(config_path),
         summary=str(summary_path),
         best_value=float(study.best_value),
-        strategy_return_pct=all_result.return_pct,
-        benchmark_return_pct=all_benchmark.return_pct,
-        excess_return_pct=all_result.return_pct - all_benchmark.return_pct,
+        strategy_return_pct=(
+            backtester_validation.strategy_return_pct
+            if backtester_validation is not None
+            else all_result.return_pct
+        ),
+        benchmark_return_pct=(
+            backtester_validation.same_stock_return_pct
+            if backtester_validation is not None
+            else all_benchmark.return_pct
+        ),
+        excess_return_pct=(
+            backtester_validation.same_stock_excess_return_pct
+            if backtester_validation is not None
+            else all_result.return_pct - all_benchmark.return_pct
+        ),
         reason=reason,
     )
 
@@ -578,6 +651,8 @@ def _optimize_portfolio(
             bar_size=profile.bar_size,
             what_to_show=profile.what_to_show,
             use_rth=profile.use_rth,
+            start_utc=settings.start_utc,
+            end_utc=settings.end_utc,
             max_bars=settings.max_bars,
         ).bars
 
@@ -655,6 +730,17 @@ def _optimize_portfolio(
     }
     hyperparameters = dict(study.best_trial.params)
     write_json(config_path, best_config)
+    backtester_validation = _validate_batch_backtester(
+        candidate=candidate,
+        config_path=config_path,
+        profile=_portfolio_backtest_profile(profiles, symbol_bars),
+        symbol_bars=symbol_bars,
+        settings=settings,
+        output_dir=output_dir,
+    )
+    if backtester_validation is not None:
+        status = backtester_validation.status
+        reason = backtester_validation.reason
     write_json(
         summary_path,
         {
@@ -667,6 +753,9 @@ def _optimize_portfolio(
             "data_profiles": profiles,
             "metrics": metrics,
             "benchmark": benchmark,
+            "backtester": backtester_validation.to_dict()
+            if backtester_validation is not None
+            else None,
             "hyperparameters": hyperparameters,
         },
     )
@@ -705,9 +794,21 @@ def _optimize_portfolio(
         best_config=str(config_path),
         summary=str(summary_path),
         best_value=float(study.best_value),
-        strategy_return_pct=all_result.return_pct,
-        benchmark_return_pct=all_benchmark.return_pct,
-        excess_return_pct=all_result.return_pct - all_benchmark.return_pct,
+        strategy_return_pct=(
+            backtester_validation.strategy_return_pct
+            if backtester_validation is not None
+            else all_result.return_pct
+        ),
+        benchmark_return_pct=(
+            backtester_validation.same_stock_return_pct
+            if backtester_validation is not None
+            else all_benchmark.return_pct
+        ),
+        excess_return_pct=(
+            backtester_validation.same_stock_excess_return_pct
+            if backtester_validation is not None
+            else all_result.return_pct - all_benchmark.return_pct
+        ),
         reason=reason,
     )
 
@@ -852,6 +953,56 @@ def _benchmark_comparison(
         "benchmark_net_pnl": benchmark_result.net_pnl,
         "excess_net_pnl": strategy_result.net_pnl - benchmark_result.net_pnl,
     }
+
+
+def _validate_batch_backtester(
+    *,
+    candidate: StrategyCandidate,
+    config_path: Path,
+    profile: BacktestProfile,
+    symbol_bars: dict[str, list[Bar]],
+    settings: BatchSettings,
+    output_dir: Path,
+) -> BacktestValidationResult | None:
+    if settings.backtester_settings is None:
+        return None
+    return validate_with_backtester(
+        strategy_config_path=config_path,
+        strategy_name=candidate.name,
+        symbols=candidate.symbols,
+        profile=profile,
+        symbol_bars=symbol_bars,
+        settings=settings.backtester_settings,
+        output_dir=output_dir / "backtester",
+    )
+
+
+def _portfolio_backtest_profile(
+    profiles: dict[str, Any],
+    symbol_bars: dict[str, list[Bar]],
+) -> BacktestProfile:
+    values = list(profiles.values())
+    if not values:
+        raise ValueError("No data profiles for portfolio BackTester validation")
+    bar_size = str(values[0]["bar_size"])
+    what_to_show = str(values[0]["what_to_show"])
+    use_rth = int(values[0]["use_rth"])
+    for profile in values[1:]:
+        if (
+            str(profile["bar_size"]) != bar_size
+            or str(profile["what_to_show"]) != what_to_show
+            or int(profile["use_rth"]) != use_rth
+        ):
+            raise ValueError(
+                "BackTester validation requires one common data profile for "
+                f"portfolio symbols, got {profiles}"
+            )
+    return profile_for_bars(
+        bar_size=bar_size,
+        what_to_show=what_to_show,
+        use_rth=use_rth,
+        symbol_bars=symbol_bars,
+    )
 
 
 def _benchmark_status(comparison: dict[str, object]) -> tuple[str, str | None]:

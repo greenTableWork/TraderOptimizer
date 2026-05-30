@@ -4,8 +4,8 @@ TraderOptimizer is a small, verbose Optuna training loop for producing
 TraderCore-style strategy config JSON.
 
 The optimizer reads `public.historical_bars` from PostgreSQL, tries strategy
-hyperparameters with Optuna, runs a simple local simulator, and stores run
-details in PostgreSQL:
+hyperparameters with Optuna, validates generated configs with the real
+TraderCore `BackTester`, and stores run details in PostgreSQL:
 
 - `best_config.json`: a TraderCore-compatible strategy config.
 - `best_summary.json`: the best trial, metrics, and data window.
@@ -14,8 +14,8 @@ details in PostgreSQL:
 - Optuna study tables in PostgreSQL.
 - JSON config and summary artifacts remain next to each run for review.
 
-This is intentionally simple. Use it to search parameter ranges quickly, then
-validate promising configs with the real TraderCore `BackTester`.
+The Optuna search still uses fast internal scoring to propose candidates, but
+generated configs are BackTester-gated by default before they are exported.
 
 ## Setup
 
@@ -39,10 +39,13 @@ trader-optimizer optimize \
 ```
 
 The command is verbose by default. It prints the data source, bar window, Optuna
-study path, best score, best config path, and train/validation metrics.
+study path, best score, best config path, train/validation metrics, and writes a
+`backtester` validation payload into `best_summary.json`.
 
 Use `--max-bars 0` if you want to run against the full matching PostgreSQL series.
 That can be much slower for the two-year `10 secs` scrape.
+Use `--start-utc` and `--end-utc` to run a smaller BackTester validation window
+when full-window validation is too expensive.
 Use `--pg-host`, `--pg-port`, `--pg-database`, `--pg-user`, and
 `--pg-password` to override the default local `trader` database. You can also
 pass `--pg-conninfo`; when doing that, pass `--optuna-storage-url` too because
@@ -78,22 +81,32 @@ The generated config uses the same core fields as TraderCore CSO configs:
 }
 ```
 
-## Validate with TraderCore BackTester
+## BackTester validation
 
-After optimization, run the generated config through the real BackTester:
+By default, every generated config is validated with TraderCore `BackTester`.
+The validation writes a temporary BackTester JSON config next to the run under
+`backtester/`, then records the BackTester summary path, generated run config,
+and benchmark comparisons in `best_summary.json`.
 
 ```bash
-cd ../TraderLab
-scripts/run_tradercore_backtest.sh --skip-build -- \
-  --pg-database trader \
-  --strategy-config /absolute/path/to/TraderOptimizer/runs/.../best_config.json \
+trader-optimizer optimize \
+  --trader-root .. \
+  --symbol AAPL \
   --bar-size "10 secs" \
-  --what-to-show TRADES \
-  --use-rth 1
+  --trials 25 \
+  --max-bars 5000 \
+  --skip-backtester-build
 ```
 
-The local optimizer is fast and inspectable, but the C++ BackTester remains the
-source of truth for fills, ledger writing, and runtime behavior.
+The BackTester validation gate requires all of these to pass:
+
+- positive strategy return after modeled fees,
+- strategy return beats SPX over the same validation window,
+- strategy return beats buying and holding the same stock symbols over the same
+  validation window.
+
+Use `--no-backtester-validation` only for development checks where exported
+configs are not being considered for promotion.
 
 ## Optimize existing strategy configs
 
@@ -105,6 +118,7 @@ trader-optimizer optimize-existing \
   --trader-root .. \
   --trials 25 \
   --max-bars 5000 \
+  --skip-backtester-build \
   --workers 4 \
   --output-dir runs/batch_existing \
   --plan-path reports/batch_optimization_plan.md \
@@ -122,6 +136,8 @@ than per-run detail files.
 Candidate strategies run concurrently by default, up to 4 workers. Pass
 `--workers 1` for serial execution or a larger value when PostgreSQL and the
 local machine can absorb more parallel studies.
+BackTester validation also runs for each generated config, and only configs with
+a passing BackTester benchmark status are copied to `--export-config-dir`.
 
 The current discovery path covers:
 
@@ -140,6 +156,7 @@ trader-optimizer optimize-existing \
   --exclude-strategy-type ConstantStepOffset \
   --trials 50 \
   --max-bars 5000 \
+  --skip-backtester-build \
   --workers 4 \
   --output-dir runs/non_cso_existing \
   --plan-path reports/non_cso_optimization_plan.md \
@@ -185,8 +202,9 @@ already parses:
 - `PortfolioAllocation` QS-001/QS-002/PAIRS-001: volatility, momentum, pair
   z-score, and gross exposure controls.
 
-The objective is a blended train/validation excess-return score against a
-buy-and-hold benchmark for the same symbol set, with penalties for configs that
-do not trade or that finish with too much marked open inventory. Batch summaries
-record strategy return, buy-and-hold return, and excess return. Only configs
-that beat buy-and-hold over the full simulated window are exported.
+The proposal objective is a blended train/validation excess-return score against
+a buy-and-hold benchmark for the same symbol set, with penalties for configs
+that do not trade or that finish with too much marked open inventory. Batch
+summaries record the BackTester-gated strategy return, same-stock hold return,
+and excess return. Only configs that pass the BackTester benchmark gates are
+exported.

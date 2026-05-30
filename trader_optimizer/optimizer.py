@@ -6,6 +6,11 @@ from typing import Any
 
 import optuna
 
+from trader_optimizer.backtester import (
+    BackTesterSettings,
+    profile_for_bars,
+    validate_with_backtester,
+)
 from trader_optimizer.config import build_constant_step_offset_config, write_json
 from trader_optimizer.data import Bar, BarWindow, split_train_validation
 from trader_optimizer.postgres import (
@@ -33,6 +38,7 @@ class OptimizationSettings:
     pg_settings: PostgresSettings
     min_trades: int
     verbose: bool
+    backtester_settings: BackTesterSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,8 @@ class OptimizationArtifacts:
     summary_path: Path
     study_storage: str
     best_value: float
+    backtester_status: str | None = None
+    backtester_reason: str | None = None
 
 
 def run_optimization(
@@ -110,24 +118,43 @@ def run_optimization(
     hyperparameters = dict(best_trial.params)
 
     write_json(config_path, config)
+    backtester_validation = None
+    if settings.backtester_settings is not None:
+        backtester_validation = validate_with_backtester(
+            strategy_config_path=config_path,
+            strategy_name=f"{window.symbol}_optimized",
+            symbols=(window.symbol,),
+            profile=profile_for_bars(
+                bar_size=window.bar_size,
+                what_to_show=window.what_to_show,
+                use_rth=window.use_rth,
+                symbol_bars={window.symbol: window.bars},
+            ),
+            symbol_bars={window.symbol: window.bars},
+            settings=settings.backtester_settings,
+            output_dir=settings.output_dir / "backtester",
+        )
+    summary_payload: dict[str, object] = {
+        "best_value": best_trial.value,
+        "best_trial_number": best_trial.number,
+        "symbol": window.symbol,
+        "bar_size": window.bar_size,
+        "what_to_show": window.what_to_show,
+        "use_rth": window.use_rth,
+        "data_source": window.data_source,
+        "first_timestamp": window.first_timestamp,
+        "last_timestamp": window.last_timestamp,
+        "bars": len(window.bars),
+        "hyperparameters": hyperparameters,
+        "resolved_strategy_params": _strategy_params_dict(best_params),
+        "metrics": metrics,
+        "benchmark": benchmark,
+    }
+    if backtester_validation is not None:
+        summary_payload["backtester"] = backtester_validation.to_dict()
     write_json(
         summary_path,
-        {
-            "best_value": best_trial.value,
-            "best_trial_number": best_trial.number,
-            "symbol": window.symbol,
-            "bar_size": window.bar_size,
-            "what_to_show": window.what_to_show,
-            "use_rth": window.use_rth,
-            "data_source": window.data_source,
-            "first_timestamp": window.first_timestamp,
-            "last_timestamp": window.last_timestamp,
-            "bars": len(window.bars),
-            "hyperparameters": hyperparameters,
-            "resolved_strategy_params": _strategy_params_dict(best_params),
-            "metrics": metrics,
-            "benchmark": benchmark,
-        },
+        summary_payload,
     )
     with postgres_connection(settings.pg_settings) as conn:
         run_id = insert_optimizer_run(
@@ -167,6 +194,10 @@ def run_optimization(
         print(f"  all_fills: {all_result.fills}")
         print(f"  config: {config_path}")
         print(f"  summary: {summary_path}")
+        if backtester_validation is not None:
+            print(f"  backtester_status: {backtester_validation.status}")
+            if backtester_validation.reason:
+                print(f"  backtester_reason: {backtester_validation.reason}")
         print("  pg_tables: optimizer_runs, optimizer_trials, optimizer_fills")
 
     return OptimizationArtifacts(
@@ -175,6 +206,12 @@ def run_optimization(
         summary_path=summary_path,
         study_storage=settings.storage_url,
         best_value=float(best_trial.value or 0.0),
+        backtester_status=backtester_validation.status
+        if backtester_validation is not None
+        else None,
+        backtester_reason=backtester_validation.reason
+        if backtester_validation is not None
+        else None,
     )
 
 

@@ -4,6 +4,7 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
+from trader_optimizer.backtester import BackTesterSettings
 from trader_optimizer.data import find_trader_root, load_bars
 from trader_optimizer.batch import (
     BatchSettings,
@@ -44,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trader workspace root. Defaults to auto-discovery from cwd.",
     )
     add_postgres_options(optimize_parser)
+    add_backtester_options(optimize_parser)
     optimize_parser.add_argument("--symbol", default="AAPL")
     optimize_parser.add_argument("--bar-size", default="10 secs")
     optimize_parser.add_argument("--what-to-show", default="TRADES")
@@ -92,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trader workspace root. Defaults to auto-discovery from cwd.",
     )
     add_postgres_options(existing_parser)
+    add_backtester_options(existing_parser)
     existing_parser.add_argument(
         "--config-glob",
         action="append",
@@ -106,6 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Preferred bar size. If omitted, the optimizer auto-selects local data.",
     )
+    existing_parser.add_argument("--start-utc", default=None)
+    existing_parser.add_argument("--end-utc", default=None)
     existing_parser.add_argument(
         "--include-strategy-type",
         action="append",
@@ -175,6 +180,47 @@ def add_postgres_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_backtester_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-backtester-validation",
+        action="store_true",
+        help="Disable real TraderCore BackTester validation for generated configs.",
+    )
+    parser.add_argument(
+        "--backtester",
+        type=Path,
+        default=None,
+        help="Override the TraderCore BackTester executable path.",
+    )
+    parser.add_argument(
+        "--backtester-preset",
+        default="debug",
+        help="TraderCore CMake preset/build directory for BackTester. Default: debug.",
+    )
+    parser.add_argument(
+        "--skip-backtester-build",
+        action="store_true",
+        help="Reuse the existing BackTester binary instead of building it first.",
+    )
+    parser.add_argument(
+        "--backtester-timeout-seconds",
+        type=int,
+        default=300,
+        help="Timeout for each BackTester validation run.",
+    )
+    parser.add_argument(
+        "--benchmark-symbol",
+        default="SPX",
+        help="PostgreSQL symbol used for the market benchmark. Default: SPX.",
+    )
+    parser.add_argument(
+        "--backtester-starting-cash",
+        type=float,
+        default=100000.0,
+        help="Starting cash for generated BackTester validation configs.",
+    )
+
+
 def postgres_settings_from_args(args: argparse.Namespace) -> PostgresSettings:
     return PostgresSettings(
         conninfo=args.pg_conninfo or "",
@@ -187,9 +233,29 @@ def postgres_settings_from_args(args: argparse.Namespace) -> PostgresSettings:
     )
 
 
+def backtester_settings_from_args(
+    args: argparse.Namespace,
+    trader_root: Path,
+    pg_settings: PostgresSettings,
+) -> BackTesterSettings | None:
+    if args.no_backtester_validation:
+        return None
+    return BackTesterSettings(
+        trader_root=trader_root,
+        pg_settings=pg_settings,
+        preset=args.backtester_preset,
+        backtester=args.backtester,
+        skip_build=args.skip_backtester_build,
+        timeout_seconds=args.backtester_timeout_seconds,
+        benchmark_symbol=args.benchmark_symbol,
+        starting_cash=args.backtester_starting_cash,
+    )
+
+
 def optimize(args: argparse.Namespace) -> int:
     trader_root = (args.trader_root or find_trader_root()).resolve()
     pg_settings = postgres_settings_from_args(args)
+    backtester_settings = backtester_settings_from_args(args, trader_root, pg_settings)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     study_name = args.study_name or f"trader_optimizer_{args.symbol}_{timestamp}"
     output_dir = (
@@ -239,6 +305,7 @@ def optimize(args: argparse.Namespace) -> int:
             pg_settings=pg_settings,
             min_trades=args.min_trades,
             verbose=verbose,
+            backtester_settings=backtester_settings,
         ),
     )
 
@@ -248,12 +315,15 @@ def optimize(args: argparse.Namespace) -> int:
         print(f"  config_path: {artifacts.config_path}")
         print(f"  summary_path: {artifacts.summary_path}")
         print(f"  study_storage: {artifacts.study_storage}")
+    if artifacts.backtester_status and artifacts.backtester_status != "ok":
+        return 1
     return 0
 
 
 def optimize_existing(args: argparse.Namespace) -> int:
     trader_root = (args.trader_root or find_trader_root()).resolve()
     pg_settings = postgres_settings_from_args(args)
+    backtester_settings = backtester_settings_from_args(args, trader_root, pg_settings)
     storage_url = optuna_storage_url(pg_settings)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output_dir = (
@@ -293,6 +363,9 @@ def optimize_existing(args: argparse.Namespace) -> int:
         if args.export_config_dir
         else None,
         workers=args.workers,
+        backtester_settings=backtester_settings,
+        start_utc=args.start_utc,
+        end_utc=args.end_utc,
     )
     if args.plan_path:
         write_optimization_plan(candidates, settings, args.plan_path.resolve())
