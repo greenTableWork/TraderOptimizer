@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from trader_optimizer.config import write_json
-from trader_optimizer.data import Bar, load_bars
+from trader_optimizer.data import Bar, choose_data_profile, load_bars
 from trader_optimizer.postgres import PostgresSettings
 from trader_optimizer.simple_strategies import (
     SimpleResult,
@@ -153,16 +153,7 @@ def validate_with_backtester(
         output_dir=output_dir,
     )
     same_stock_benchmark = _same_stock_benchmark(symbol_bars, settings.starting_cash)
-    spx_bars = load_bars(
-        pg_settings=settings.pg_settings,
-        symbol=settings.benchmark_symbol,
-        bar_size=profile.bar_size,
-        what_to_show=profile.what_to_show,
-        use_rth=profile.use_rth,
-        start_utc=profile.start_utc,
-        end_utc=profile.end_utc,
-        max_bars=0,
-    ).bars
+    spx_bars = _load_benchmark_bars(settings, profile)
     spx_benchmark = simulate_buy_and_hold(
         spx_bars,
         allocated_capital=settings.starting_cash,
@@ -179,6 +170,42 @@ def validate_with_backtester(
         same_stock_benchmark=same_stock_benchmark,
         spx_benchmark=spx_benchmark,
     )
+
+
+def _load_benchmark_bars(
+    settings: BackTesterSettings,
+    profile: BacktestProfile,
+) -> list[Bar]:
+    try:
+        return load_bars(
+            pg_settings=settings.pg_settings,
+            symbol=settings.benchmark_symbol,
+            bar_size=profile.bar_size,
+            what_to_show=profile.what_to_show,
+            use_rth=profile.use_rth,
+            start_utc=profile.start_utc,
+            end_utc=profile.end_utc,
+            max_bars=0,
+        ).bars
+    except ValueError as exact_profile_error:
+        fallback_profile = choose_data_profile(
+            settings.pg_settings,
+            settings.benchmark_symbol,
+            preferred_bar_size=profile.bar_size,
+        )
+        try:
+            return load_bars(
+                pg_settings=settings.pg_settings,
+                symbol=settings.benchmark_symbol,
+                bar_size=fallback_profile.bar_size,
+                what_to_show=fallback_profile.what_to_show,
+                use_rth=fallback_profile.use_rth,
+                start_utc=profile.start_utc,
+                end_utc=profile.end_utc,
+                max_bars=0,
+            ).bars
+        except ValueError as fallback_error:
+            raise exact_profile_error from fallback_error
 
 
 def run_backtester(
@@ -199,13 +226,17 @@ def run_backtester(
     output_dir.mkdir(parents=True, exist_ok=True)
     safe_name = _safe_name(strategy_name)
     run_id = f"{safe_name}_backtester"
+    backtester_strategy_config_path = _write_backtester_strategy_config(
+        strategy_config_path,
+        output_dir / "strategy_config_backtester.json",
+    )
     run_config_path = output_dir / "backtest_config.json"
     run_output_dir = output_dir / "outputs"
     summary_path = run_output_dir / f"{run_id}_summary.json"
     write_json(
         run_config_path,
         _backtest_config(
-            strategy_config_path=strategy_config_path,
+            strategy_config_path=backtester_strategy_config_path,
             symbols=symbols,
             profile=profile,
             settings=settings,
@@ -260,7 +291,7 @@ def run_backtester(
         summary=summary,
         summary_path=str(summary_path),
         run_config_path=str(run_config_path),
-        strategy_config_path=str(strategy_config_path),
+        strategy_config_path=str(backtester_strategy_config_path),
     )
 
 
@@ -357,6 +388,30 @@ def _backtest_config(
             "randomSeed": 0,
         },
     }
+
+
+def _write_backtester_strategy_config(source_path: Path, destination_path: Path) -> Path:
+    try:
+        config = json.loads(source_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return source_path
+    if not isinstance(config, dict):
+        return source_path
+
+    rewritten = _rewrite_exchanges(config)
+    write_json(destination_path, rewritten)
+    return destination_path
+
+
+def _rewrite_exchanges(value: Any) -> Any:
+    if isinstance(value, dict):
+        rewritten = {key: _rewrite_exchanges(item) for key, item in value.items()}
+        if "exchange" in rewritten:
+            rewritten["exchange"] = "BACKTESTER"
+        return rewritten
+    if isinstance(value, list):
+        return [_rewrite_exchanges(item) for item in value]
+    return value
 
 
 def _same_stock_benchmark(

@@ -6,5 +6,14 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 runs/
+
+# Generated reports; force-add when a specific report should be published.
+reports/*_plan.md
+reports/*_todo_*.md
+reports/regime_corpus_bfs_*/
+reports/regime_detection_paper_lookup_*.md
+reports/regime_detection_paper_lookup_*_candidates.jsonl
+reports/regime_detection_paper_scout_*.md
+
 dist/
 build/

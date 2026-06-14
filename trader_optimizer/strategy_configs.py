@@ -20,6 +20,30 @@ DEFAULT_CONFIG_GLOBS = (
     "TraderCore/TraderLogicConfigs/TraderCore/configs/backtesting/**/*.json",
     "TraderCore/TraderLogicConfigs/TraderLab/configs/backtests/**/*.json",
 )
+OPTIMIZER_SUPPORTED_TECHNICAL_SIGNAL_VARIANTS = frozenset(
+    {
+        "TS-002",
+        "EMACROSS",
+        "EMA_CROSS",
+        "TS-003",
+        "BOLLINGERBREAKOUT",
+        "BOLLINGER_BREAKOUT",
+        "TS-004",
+        "OPENINGRANGEBREAKOUT",
+        "OPENING_RANGE_BREAKOUT",
+        "ORB",
+        "TS-005",
+        "RSIDIVERGENCE",
+        "RSI_DIVERGENCE",
+    }
+)
+OPTIMIZER_SUPPORTED_PORTFOLIO_VARIANTS = frozenset(
+    {
+        "QS-001",
+        "QS-002",
+        "PAIRS-001",
+    }
+)
 
 
 def discover_strategy_candidates(
@@ -38,6 +62,16 @@ def discover_strategy_candidates(
             if candidate:
                 candidates.append(candidate)
     return candidates
+
+
+def is_optimizer_supported_candidate(candidate: StrategyCandidate) -> bool:
+    if candidate.strategy_type in {"ConstantStepOffset", "MovingAverageCross"}:
+        return True
+    if candidate.strategy_type == "TechnicalSignal":
+        return candidate.variant in OPTIMIZER_SUPPORTED_TECHNICAL_SIGNAL_VARIANTS
+    if candidate.strategy_type == "PortfolioAllocation":
+        return candidate.variant in OPTIMIZER_SUPPORTED_PORTFOLIO_VARIANTS
+    return False
 
 
 def load_strategy_candidate(path: Path) -> StrategyCandidate | None:

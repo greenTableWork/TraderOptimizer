@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from statistics import mean
 
@@ -14,6 +15,7 @@ class Bar:
     high: float
     low: float
     close: float
+    volume: float | None = None
 
     @property
     def backtest_price(self) -> float:
@@ -90,14 +92,15 @@ def load_bars(
     where_clause = " AND ".join(filters)
     if max_bars > 0:
         query = f"""
-            SELECT bar_time_utc, open, high, low, close
+            SELECT bar_time_utc, open, high, low, close, volume
             FROM (
                 SELECT
                     to_char(bar_time_utc AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"') AS bar_time_utc,
                     open,
                     high,
                     low,
-                    close
+                    close,
+                    volume
                 FROM historical_bars
                 WHERE {where_clause}
                 ORDER BY bar_time_utc DESC
@@ -113,7 +116,8 @@ def load_bars(
                 open,
                 high,
                 low,
-                close
+                close,
+                volume
             FROM historical_bars
             WHERE {where_clause}
             ORDER BY bar_time_utc ASC
@@ -131,6 +135,7 @@ def load_bars(
             high=float(row[2]),
             low=float(row[3]),
             close=float(row[4]),
+            volume=float(row[5]) if row[5] is not None else None,
         )
         for row in rows
     ]
@@ -155,6 +160,37 @@ def available_profiles(
     pg_settings: PostgresSettings,
     symbol: str | None = None,
 ) -> list[DataProfile]:
+    return list(
+        _available_profiles_cached(
+            pg_settings.conninfo,
+            pg_settings.host,
+            pg_settings.port,
+            pg_settings.database,
+            pg_settings.user,
+            pg_settings.password,
+            symbol,
+        )
+    )
+
+
+@lru_cache(maxsize=512)
+def _available_profiles_cached(
+    conninfo: str,
+    host: str,
+    port: int,
+    database: str,
+    user: str | None,
+    password: str | None,
+    symbol: str | None,
+) -> tuple[DataProfile, ...]:
+    pg_settings = PostgresSettings(
+        conninfo=conninfo,
+        host=host,
+        port=port,
+        database=database,
+        user=user,
+        password=password,
+    )
     params: list[object] = []
     filter_sql = ""
     if symbol is not None:
@@ -179,7 +215,7 @@ def available_profiles(
         with connection.cursor() as cursor:
             cursor.execute(query, params)
             rows = cursor.fetchall()
-    return [
+    return tuple(
         DataProfile(
             symbol=str(row[0]),
             bar_size=str(row[1]),
@@ -190,7 +226,7 @@ def available_profiles(
             last_timestamp=str(row[6]),
         )
         for row in rows
-    ]
+    )
 
 
 def choose_data_profile(

@@ -295,6 +295,315 @@ def ensure_optimizer_schema(conn) -> None:
     conn.commit()
 
 
+def ensure_live_regime_schema(conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS regime_detector_runs (
+                run_id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                detector_spec_version TEXT NOT NULL DEFAULT '',
+                started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                completed_at TIMESTAMPTZ,
+                status TEXT NOT NULL DEFAULT 'running',
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+            );
+
+            CREATE TABLE IF NOT EXISTS live_regime_vectors (
+                symbol TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                detector_run_id TEXT NOT NULL,
+                regime_cell_id TEXT NOT NULL,
+                vector JSONB NOT NULL,
+                detection JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (symbol, window_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS regime_vector_history (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                detector_run_id TEXT NOT NULL,
+                regime_cell_id TEXT NOT NULL,
+                vector JSONB NOT NULL,
+                detection JSONB NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+
+            CREATE INDEX IF NOT EXISTS regime_vector_history_symbol_time_idx
+                ON regime_vector_history (symbol, observed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS regime_transition_events (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                detector_run_id TEXT NOT NULL,
+                from_regime_cell_id TEXT NOT NULL DEFAULT '',
+                to_regime_cell_id TEXT NOT NULL,
+                transition_status TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                confidence NUMERIC(12, 8),
+                detection JSONB NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+
+            CREATE TABLE IF NOT EXISTS strategy_regime_config_map (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                regime_cell_id TEXT NOT NULL,
+                regime_cell JSONB NOT NULL,
+                strategy_name TEXT NOT NULL,
+                config_path TEXT NOT NULL,
+                validation_status TEXT NOT NULL,
+                excess_return_pct NUMERIC(38, 12),
+                spx_excess_return_pct NUMERIC(38, 12),
+                same_stock_excess_return_pct NUMERIC(38, 12),
+                source TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (symbol, regime_cell_id, strategy_name, config_path)
+            );
+
+            CREATE INDEX IF NOT EXISTS strategy_regime_config_map_lookup_idx
+                ON strategy_regime_config_map (
+                    symbol, regime_cell_id, validation_status
+                );
+
+            CREATE TABLE IF NOT EXISTS strategy_selection_decisions (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                detector_run_id TEXT NOT NULL,
+                regime_cell_id TEXT NOT NULL,
+                selection_status TEXT NOT NULL,
+                selected_config_path TEXT NOT NULL DEFAULT '',
+                decision JSONB NOT NULL,
+                observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """
+        )
+    conn.commit()
+
+
+def insert_live_regime_detections(
+    conn,
+    *,
+    run_id: str,
+    mode: str,
+    detector_spec_version: str,
+    detections: list[dict[str, Any]],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    from psycopg2.extras import Json, execute_values
+
+    ensure_live_regime_schema(conn)
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO regime_detector_runs (
+                run_id, mode, detector_spec_version, status, metadata
+            )
+            VALUES (%s, %s, %s, 'completed', %s)
+            ON CONFLICT (run_id)
+            DO UPDATE SET
+                mode = excluded.mode,
+                detector_spec_version = excluded.detector_spec_version,
+                completed_at = now(),
+                status = excluded.status,
+                metadata = excluded.metadata
+            """,
+            (
+                run_id,
+                mode,
+                detector_spec_version,
+                Json(metadata or {}),
+            ),
+        )
+
+    live_rows = []
+    history_rows = []
+    transition_rows = []
+    selection_rows = []
+    for detection in detections:
+        symbol = str(detection.get("symbol") or "")
+        state = detection.get("state")
+        transition = detection.get("transition")
+        selection = detection.get("strategySelection")
+        source_vector = detection.get("sourceVector")
+        window_key = ""
+        if isinstance(state, dict):
+            window_key = str(state.get("stateKey") or "")
+        regime_cell = str(detection.get("activeRegimeCellId") or "")
+        live_rows.append(
+            (
+                symbol,
+                window_key,
+                run_id,
+                regime_cell,
+                Json(source_vector if isinstance(source_vector, dict) else {}),
+                Json(detection),
+            )
+        )
+        history_rows.append(
+            (
+                symbol,
+                window_key,
+                run_id,
+                regime_cell,
+                Json(source_vector if isinstance(source_vector, dict) else {}),
+                Json(detection),
+            )
+        )
+        if isinstance(transition, dict) and transition.get("status") in {
+            "initialized",
+            "switched",
+        }:
+            transition_rows.append(
+                (
+                    symbol,
+                    window_key,
+                    run_id,
+                    str(transition.get("fromRegimeCellId") or ""),
+                    str(transition.get("toRegimeCellId") or regime_cell),
+                    str(transition.get("status") or ""),
+                    str(transition.get("reason") or ""),
+                    _numeric_or_none(
+                        state.get("changePointConfidence")
+                        if isinstance(state, dict)
+                        else None
+                    ),
+                    Json(detection),
+                )
+            )
+        selected_config = ""
+        selection_status = "unknown"
+        if isinstance(selection, dict):
+            selection_status = str(selection.get("status") or "unknown")
+            selected = selection.get("selected")
+            if isinstance(selected, dict):
+                selected_config = str(selected.get("configPath") or "")
+        selection_rows.append(
+            (
+                symbol,
+                window_key,
+                run_id,
+                regime_cell,
+                selection_status,
+                selected_config,
+                Json(selection if isinstance(selection, dict) else {}),
+            )
+        )
+
+    with conn.cursor() as cursor:
+        if live_rows:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO live_regime_vectors (
+                    symbol, window_key, detector_run_id, regime_cell_id,
+                    vector, detection
+                )
+                VALUES %s
+                ON CONFLICT (symbol, window_key)
+                DO UPDATE SET
+                    detector_run_id = excluded.detector_run_id,
+                    regime_cell_id = excluded.regime_cell_id,
+                    vector = excluded.vector,
+                    detection = excluded.detection,
+                    updated_at = now()
+                """,
+                live_rows,
+            )
+        if history_rows:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO regime_vector_history (
+                    symbol, window_key, detector_run_id, regime_cell_id,
+                    vector, detection
+                )
+                VALUES %s
+                """,
+                history_rows,
+            )
+        if transition_rows:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO regime_transition_events (
+                    symbol, window_key, detector_run_id, from_regime_cell_id,
+                    to_regime_cell_id, transition_status, reason, confidence,
+                    detection
+                )
+                VALUES %s
+                """,
+                transition_rows,
+            )
+        if selection_rows:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO strategy_selection_decisions (
+                    symbol, window_key, detector_run_id, regime_cell_id,
+                    selection_status, selected_config_path, decision
+                )
+                VALUES %s
+                """,
+                selection_rows,
+            )
+    conn.commit()
+
+
+def insert_strategy_regime_config_map(
+    conn,
+    *,
+    entries: list[dict[str, Any]],
+) -> None:
+    from psycopg2.extras import Json, execute_values
+
+    ensure_live_regime_schema(conn)
+    rows = []
+    for entry in entries:
+        rows.append(
+            (
+                str(entry.get("symbol") or "").upper(),
+                str(entry.get("regimeCellId") or ""),
+                Json(entry.get("regimeCell") if isinstance(entry.get("regimeCell"), dict) else {}),
+                str(entry.get("strategyName") or ""),
+                str(entry.get("configPath") or ""),
+                str(entry.get("validationStatus") or ""),
+                _numeric_or_none(entry.get("excessReturnPct")),
+                _numeric_or_none(entry.get("spxExcessReturnPct")),
+                _numeric_or_none(entry.get("sameStockExcessReturnPct")),
+                str(entry.get("source") or ""),
+            )
+        )
+    if not rows:
+        return
+    with conn.cursor() as cursor:
+        execute_values(
+            cursor,
+            """
+            INSERT INTO strategy_regime_config_map (
+                symbol, regime_cell_id, regime_cell, strategy_name, config_path,
+                validation_status, excess_return_pct, spx_excess_return_pct,
+                same_stock_excess_return_pct, source
+            )
+            VALUES %s
+            ON CONFLICT (symbol, regime_cell_id, strategy_name, config_path)
+            DO UPDATE SET
+                regime_cell = excluded.regime_cell,
+                validation_status = excluded.validation_status,
+                excess_return_pct = excluded.excess_return_pct,
+                spx_excess_return_pct = excluded.spx_excess_return_pct,
+                same_stock_excess_return_pct = excluded.same_stock_excess_return_pct,
+                source = excluded.source
+            """,
+            rows,
+        )
+    conn.commit()
+
+
 def insert_optimizer_run(
     conn,
     *,

@@ -13,6 +13,8 @@ from trader_optimizer.backtester import (
 )
 from trader_optimizer.config import build_constant_step_offset_config, write_json
 from trader_optimizer.data import Bar, BarWindow, split_train_validation
+from trader_optimizer.market_feature_sources import build_market_feature_summary_from_postgres
+from trader_optimizer.optuna_studies import create_or_load_study
 from trader_optimizer.postgres import (
     PostgresSettings,
     insert_optimizer_fills,
@@ -26,6 +28,7 @@ from trader_optimizer.simulator import (
     StrategyParams,
     simulate_constant_step_offset,
 )
+from trader_optimizer.tuning_profile import build_tuning_profile
 
 
 @dataclass(frozen=True)
@@ -69,11 +72,10 @@ def run_optimization(
         print(f"  train bars: {len(train_bars)}")
         print(f"  validation bars: {len(validation_bars)}")
 
-    study = optuna.create_study(
+    study = create_or_load_study(
         direction="maximize",
         study_name=settings.study_name,
         storage=settings.storage_url,
-        load_if_exists=True,
     )
 
     objective = _Objective(
@@ -116,6 +118,41 @@ def run_optimization(
         "all": _benchmark_comparison(all_result, all_benchmark),
     }
     hyperparameters = dict(best_trial.params)
+    market_features = build_market_feature_summary_from_postgres(
+        settings.pg_settings,
+        {window.symbol: window.bars},
+        preferred_bar_size=window.bar_size,
+        start_utc=window.first_timestamp,
+        end_utc=window.last_timestamp,
+        max_bars=len(window.bars),
+    )
+    tuning_profile = build_tuning_profile(
+        strategy_name=f"CSO_{window.symbol}_OPTIMIZED",
+        strategy_type="ConstantStepOffset",
+        variant="CSO",
+        symbols=(window.symbol,),
+        config=config,
+        tuned_fields=[
+            "baseline_quantile",
+            "step_delta_pct",
+            "execution_steps",
+            "threshold_pct_of_step",
+            "order_quantity_usd",
+        ],
+        data_profiles={
+            window.symbol: {
+                "symbol": window.symbol,
+                "bar_size": window.bar_size,
+                "what_to_show": window.what_to_show,
+                "use_rth": window.use_rth,
+                "first_timestamp": window.first_timestamp,
+                "last_timestamp": window.last_timestamp,
+            }
+        },
+        hyperparameters=hyperparameters,
+        market_features=market_features,
+    )
+    config["strategyTuningProfile"] = tuning_profile
 
     write_json(config_path, config)
     backtester_validation = None
@@ -149,6 +186,7 @@ def run_optimization(
         "resolved_strategy_params": _strategy_params_dict(best_params),
         "metrics": metrics,
         "benchmark": benchmark,
+        "strategyTuningProfile": tuning_profile,
     }
     if backtester_validation is not None:
         summary_payload["backtester"] = backtester_validation.to_dict()
