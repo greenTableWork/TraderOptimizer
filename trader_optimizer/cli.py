@@ -11,8 +11,38 @@ from trader_optimizer.batch import (
     optimize_candidates,
     write_optimization_plan,
 )
+from trader_optimizer.benchmark_loop import (
+    BenchmarkLoopSettings,
+    run_benchmark_loop,
+)
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
-from trader_optimizer.postgres import PostgresSettings, optuna_storage_url, postgres_settings_from_env
+from trader_optimizer.live_regime import (
+    build_live_regime_detections,
+    load_live_regime_state,
+    load_strategy_regime_candidates,
+    write_live_regime_detections_jsonl,
+    write_live_regime_state,
+    write_live_regime_summary,
+)
+from trader_optimizer.postgres import (
+    PostgresSettings,
+    insert_live_regime_detections,
+    insert_strategy_regime_config_map,
+    optuna_storage_url,
+    postgres_connection,
+    postgres_settings_from_env,
+)
+from trader_optimizer.regime_detector_specs import DETECTOR_SPEC_VERSION
+from trader_optimizer.regime_tuning_universe import (
+    DEFAULT_REGIME_DIMENSIONS,
+    load_regime_vectors_jsonl,
+)
+from trader_optimizer.strategy_regime_map import (
+    DEFAULT_VALIDATION_STATUSES,
+    build_strategy_regime_map_from_run_summary,
+    write_strategy_regime_map_jsonl,
+    write_strategy_regime_map_summary,
+)
 from trader_optimizer.strategy_configs import discover_strategy_candidates
 
 
@@ -23,6 +53,12 @@ def main(argv: list[str] | None = None) -> int:
         return optimize(args)
     if args.command == "optimize-existing":
         return optimize_existing(args)
+    if args.command == "benchmark-loop":
+        return benchmark_loop(args)
+    if args.command == "detect-live-regimes":
+        return detect_live_regimes(args)
+    if args.command == "build-strategy-map":
+        return build_strategy_map(args)
     parser.print_help()
     return 2
 
@@ -127,6 +163,16 @@ def build_parser() -> argparse.ArgumentParser:
     existing_parser.add_argument("--max-bars", type=int, default=5000)
     existing_parser.add_argument("--train-fraction", type=float, default=0.70)
     existing_parser.add_argument(
+        "--strategy-budget",
+        type=float,
+        default=None,
+        help=(
+            "Budget used to size generated strategy configs. For single-symbol "
+            "strategies this caps searched order quantity by first-bar notional; "
+            "for portfolio strategies this overrides portfolioNotional."
+        ),
+    )
+    existing_parser.add_argument(
         "--workers",
         type=int,
         default=0,
@@ -155,6 +201,173 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Reduce progress logging.",
     )
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark-loop",
+        help="Continuously run rolling benchmarks for daily through yearly strategy windows.",
+    )
+    benchmark_parser.add_argument(
+        "--trader-root",
+        type=Path,
+        default=None,
+        help="Trader workspace root. Defaults to auto-discovery from cwd.",
+    )
+    add_postgres_options(benchmark_parser)
+    add_backtester_options(benchmark_parser)
+    benchmark_parser.add_argument(
+        "--config-glob",
+        action="append",
+        default=None,
+        help="Strategy config glob relative to trader root. May be repeated.",
+    )
+    benchmark_parser.add_argument("--bar-size", default=None)
+    benchmark_parser.add_argument(
+        "--include-strategy-type",
+        action="append",
+        default=None,
+        help="Only benchmark this strategy_type. May be repeated.",
+    )
+    benchmark_parser.add_argument(
+        "--exclude-strategy-type",
+        action="append",
+        default=None,
+        help="Skip this strategy_type. May be repeated.",
+    )
+    benchmark_parser.add_argument("--trials", type=int, default=25)
+    benchmark_parser.add_argument("--max-bars", type=int, default=0)
+    benchmark_parser.add_argument("--train-fraction", type=float, default=0.70)
+    benchmark_parser.add_argument(
+        "--strategy-budget",
+        type=float,
+        default=None,
+        help="Budget used to size generated strategy configs during benchmark runs.",
+    )
+    benchmark_parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel strategy optimizations per benchmark period. Default 0 uses up to 4 workers.",
+    )
+    benchmark_parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=None,
+        help="Root for benchmark cycles. Defaults to runs/benchmarks.",
+    )
+    benchmark_parser.add_argument(
+        "--state-path",
+        type=Path,
+        default=None,
+        help="State JSON tracking promoted champions. Defaults to <output-root>/benchmark_state.json.",
+    )
+    benchmark_parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=24 * 60 * 60,
+        help="Seconds between benchmark cycles when not using --once. Default: 86400.",
+    )
+    benchmark_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one benchmark cycle and exit instead of looping forever.",
+    )
+    benchmark_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Reduce progress logging.",
+    )
+
+    regime_parser = subparsers.add_parser(
+        "detect-live-regimes",
+        help="Convert current regime vectors into smoothed live regime decisions.",
+    )
+    add_postgres_options(regime_parser)
+    regime_parser.add_argument(
+        "--regime-vectors",
+        type=Path,
+        required=True,
+        help="Current regime vector JSONL produced by scripts/build_regime_vectors.py.",
+    )
+    regime_parser.add_argument(
+        "--strategy-map",
+        type=Path,
+        default=None,
+        help="Optional JSONL of BackTester-gated strategy to regime-cell mappings.",
+    )
+    regime_parser.add_argument(
+        "--state-input",
+        type=Path,
+        default=None,
+        help="Previous live regime state JSON. Defaults to empty state.",
+    )
+    regime_parser.add_argument(
+        "--state-output",
+        type=Path,
+        default=None,
+        help="Write updated live regime state JSON.",
+    )
+    regime_parser.add_argument("--output", type=Path, default=None)
+    regime_parser.add_argument("--summary-output", type=Path, default=None)
+    regime_parser.add_argument(
+        "--mode",
+        choices=("shadow", "paper", "production"),
+        default="shadow",
+    )
+    regime_parser.add_argument(
+        "--min-persistence",
+        type=int,
+        default=3,
+        help="Raw regime observations required before switching active cell.",
+    )
+    regime_parser.add_argument(
+        "--change-point-threshold",
+        type=float,
+        default=0.80,
+        help="Change-point confidence that can override hysteresis.",
+    )
+    regime_parser.add_argument(
+        "--dimension",
+        action="append",
+        default=None,
+        help=(
+            "Core regime dimension for the active cell. May be repeated. "
+            "Defaults to directionSign, instrumentVolatilityRegime, "
+            "marketVolatilityRegime, and volumeRegime."
+        ),
+    )
+    regime_parser.add_argument(
+        "--write-postgres",
+        action="store_true",
+        help="Persist detections into live regime PostgreSQL tables.",
+    )
+    regime_parser.add_argument("--run-id", default=None)
+    regime_parser.add_argument("--quiet", action="store_true")
+
+    strategy_map_parser = subparsers.add_parser(
+        "build-strategy-map",
+        help="Build a live-compatible strategy-to-regime map from a universe run summary.",
+    )
+    add_postgres_options(strategy_map_parser)
+    strategy_map_parser.add_argument(
+        "--run-summary",
+        type=Path,
+        required=True,
+        help="regime_tuning_universe_run.v1 summary produced by run_regime_tuning_universe.py.",
+    )
+    strategy_map_parser.add_argument(
+        "--validation-status",
+        action="append",
+        default=None,
+        help="Include this batch validation status. Defaults to ok. May be repeated.",
+    )
+    strategy_map_parser.add_argument("--output", type=Path, default=None)
+    strategy_map_parser.add_argument("--summary-output", type=Path, default=None)
+    strategy_map_parser.add_argument(
+        "--write-postgres",
+        action="store_true",
+        help="Upsert the map into strategy_regime_config_map.",
+    )
+    strategy_map_parser.add_argument("--quiet", action="store_true")
     return parser
 
 
@@ -344,6 +557,8 @@ def optimize_existing(args: argparse.Namespace) -> int:
         print(f"  candidates: {len(candidates)}")
         print(f"  trials_per_candidate: {args.trials}")
         print(f"  max_bars: {args.max_bars}")
+        if args.strategy_budget is not None:
+            print(f"  strategy_budget: {args.strategy_budget}")
         print(f"  workers: {args.workers or 'auto'}")
         print(f"  output_dir: {output_dir}")
         if args.plan_path:
@@ -366,6 +581,7 @@ def optimize_existing(args: argparse.Namespace) -> int:
         backtester_settings=backtester_settings,
         start_utc=args.start_utc,
         end_utc=args.end_utc,
+        strategy_budget=args.strategy_budget,
     )
     if args.plan_path:
         write_optimization_plan(candidates, settings, args.plan_path.resolve())
@@ -381,6 +597,120 @@ def optimize_existing(args: argparse.Namespace) -> int:
         if args.export_config_dir:
             print(f"  exported_configs: {args.export_config_dir.resolve()}")
     return 0 if ok else 1
+
+
+def detect_live_regimes(args: argparse.Namespace) -> int:
+    pg_settings = postgres_settings_from_args(args)
+    vectors = load_regime_vectors_jsonl(args.regime_vectors)
+    previous_states = load_live_regime_state(args.state_input)
+    strategy_candidates = load_strategy_regime_candidates(args.strategy_map)
+    dimensions = tuple(args.dimension or DEFAULT_REGIME_DIMENSIONS)
+    generated_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    output_path = (
+        args.output
+        or Path.cwd()
+        / "runs"
+        / "live_regimes"
+        / f"{timestamp}_live_regime_detections.jsonl"
+    ).resolve()
+    summary_path = (
+        args.summary_output
+        or output_path.with_name(f"{output_path.stem}_summary.json")
+    ).resolve()
+    state_output = (
+        args.state_output
+        or output_path.with_name(f"{output_path.stem}_state.json")
+    ).resolve()
+    run_id = args.run_id or f"live_regime_{timestamp}"
+
+    detections, states = build_live_regime_detections(
+        vectors,
+        previous_states=previous_states,
+        min_persistence=args.min_persistence,
+        change_point_threshold=args.change_point_threshold,
+        mode=args.mode,
+        generated_utc=generated_utc,
+        regime_dimensions=dimensions,
+        strategy_candidates=strategy_candidates,
+    )
+    write_live_regime_detections_jsonl(output_path, detections)
+    write_live_regime_state(state_output, states)
+    write_live_regime_summary(summary_path, detections)
+    if args.write_postgres:
+        with postgres_connection(pg_settings) as conn:
+            insert_live_regime_detections(
+                conn,
+                run_id=run_id,
+                mode=args.mode,
+                detector_spec_version=DETECTOR_SPEC_VERSION,
+                detections=detections,
+                metadata={
+                    "regimeVectors": str(args.regime_vectors),
+                    "stateInput": str(args.state_input)
+                    if args.state_input
+                    else None,
+                    "strategyMap": str(args.strategy_map)
+                    if args.strategy_map
+                    else None,
+                    "dimensions": list(dimensions),
+                },
+            )
+
+    if not args.quiet:
+        print("Live regime detection finished")
+        print(f"  run_id: {run_id}")
+        print(f"  mode: {args.mode}")
+        print(f"  vectors: {len(vectors)}")
+        print(f"  detections: {len(detections)}")
+        print(f"  output: {output_path}")
+        print(f"  state: {state_output}")
+        print(f"  summary: {summary_path}")
+        if args.write_postgres:
+            print("  pg_tables: live_regime_vectors, regime_vector_history")
+    return 0
+
+
+def build_strategy_map(args: argparse.Namespace) -> int:
+    run_summary_path = args.run_summary.resolve()
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    output_path = (
+        args.output
+        or Path.cwd()
+        / "runs"
+        / "strategy_regime_maps"
+        / f"{timestamp}_strategy_regime_map.jsonl"
+    ).resolve()
+    summary_path = (
+        args.summary_output
+        or output_path.with_name(f"{output_path.stem}_summary.json")
+    ).resolve()
+    validation_statuses = tuple(args.validation_status or DEFAULT_VALIDATION_STATUSES)
+    entries = build_strategy_regime_map_from_run_summary(
+        run_summary_path,
+        validation_statuses=validation_statuses,
+        cwd=Path.cwd(),
+    )
+    write_strategy_regime_map_jsonl(output_path, entries)
+    write_strategy_regime_map_summary(
+        summary_path,
+        entries,
+        run_summary_path=run_summary_path,
+    )
+    if args.write_postgres:
+        pg_settings = postgres_settings_from_args(args)
+        with postgres_connection(pg_settings) as conn:
+            insert_strategy_regime_config_map(conn, entries=entries)
+    if not args.quiet:
+        print("Strategy regime map finished")
+        print(f"  run_summary: {run_summary_path}")
+        print(f"  validation_statuses: {', '.join(validation_statuses)}")
+        print(f"  entries: {len(entries)}")
+        print(f"  output: {output_path}")
+        print(f"  summary: {summary_path}")
+        if args.write_postgres:
+            print("  pg_table: strategy_regime_config_map")
+    return 0
 
 
 def _filter_candidates(

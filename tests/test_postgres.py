@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from trader_optimizer.postgres import (
     PostgresSettings,
+    ensure_live_regime_schema,
     _numeric_or_none,
     ensure_optimizer_schema,
     optuna_storage_url,
@@ -111,6 +112,45 @@ def test_optimizer_schema_uses_numeric_storage_not_double_precision() -> None:
     assert "ALTER COLUMN value TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN strategy_return_pct TYPE NUMERIC(38, 12)" in schema_sql
     assert "ALTER COLUMN total_return TYPE NUMERIC(38, 12)" in schema_sql
+
+
+def test_live_regime_schema_is_additive_and_does_not_alter_history() -> None:
+    class FakeCursor:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, sql: str) -> None:
+            self.statements.append(sql)
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.cursor_instance = FakeCursor()
+            self.commits = 0
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    conn = FakeConnection()
+
+    ensure_live_regime_schema(conn)
+
+    schema_sql = conn.cursor_instance.statements[0]
+    assert "CREATE TABLE IF NOT EXISTS live_regime_vectors" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS regime_vector_history" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS regime_transition_events" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS strategy_regime_config_map" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS strategy_selection_decisions" in schema_sql
+    assert "ALTER TABLE historical_bars" not in schema_sql
+    assert conn.commits == 1
 
 
 def test_postgres_numeric_values_use_decimal_strings() -> None:
