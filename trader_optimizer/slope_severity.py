@@ -5,12 +5,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from statistics import mean
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from trader_optimizer.config import write_json
 from trader_optimizer.data import Bar
+from trader_optimizer.series_math import full_window_slope_pct as _full_window_slope_pct
 
 
 SLOPE_SEVERITY_CONFIG_SCHEMA = "instrument_slope_severity_config.v1"
@@ -469,16 +469,3 @@ def _parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
-
-
-def _full_window_slope_pct(values: Sequence[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    x_mean = (len(values) - 1) / 2.0
-    y_mean = mean(values)
-    numerator = sum((idx - x_mean) * (value - y_mean) for idx, value in enumerate(values))
-    denominator = sum((idx - x_mean) ** 2 for idx in range(len(values)))
-    if denominator == 0 or values[0] == 0:
-        return 0.0
-    slope_per_bar = numerator / denominator
-    return slope_per_bar * (len(values) - 1) / values[0]

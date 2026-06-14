@@ -20,6 +20,12 @@ from trader_optimizer.market_features import (
     OptionTrade,
     build_options_probability_map,
 )
+from trader_optimizer.series_math import (
+    correlation as _correlation,
+    deltas as _deltas,
+    full_window_slope_pct as _full_window_slope_pct,
+    returns_from_bars as _returns,
+)
 from trader_optimizer.slope_severity import (
     slope_severity_from_slope,
     slope_severity_thresholds_to_dict,
@@ -1276,103 +1282,106 @@ def normalize_periods(raw_periods: Iterable[str] | None) -> tuple[Period, ...]:
 
 
 def normalize_directions(raw_directions: Iterable[str] | None) -> tuple[Direction, ...]:
-    if not raw_directions:
-        return DEFAULT_DIRECTIONS
-    directions: list[Direction] = []
-    seen: set[str] = set()
-    for raw_direction in raw_directions:
-        direction = raw_direction.lower()
-        if direction not in {"up", "down", "flat"}:
-            raise ValueError(f"Unsupported direction {raw_direction!r}")
-        if direction not in seen:
-            seen.add(direction)
-            directions.append(direction)  # type: ignore[arg-type]
-    return tuple(directions)
+    return cast(
+        tuple[Direction, ...],
+        _normalize_literal_values(
+            raw_directions,
+            default=DEFAULT_DIRECTIONS,
+            supported={"up", "down", "flat"},
+            label="direction",
+        ),
+    )
 
 
 def normalize_volatility_regimes(
     raw_regimes: Iterable[str] | None,
 ) -> tuple[VolatilityRegime, ...]:
-    if not raw_regimes:
-        return DEFAULT_VOLATILITY_REGIMES
-    regimes: list[VolatilityRegime] = []
-    seen: set[str] = set()
-    for raw_regime in raw_regimes:
-        regime = raw_regime.lower()
-        if regime not in {"low", "medium", "high"}:
-            raise ValueError(f"Unsupported volatility regime {raw_regime!r}")
-        if regime not in seen:
-            seen.add(regime)
-            regimes.append(regime)  # type: ignore[arg-type]
-    return tuple(regimes)
+    return cast(
+        tuple[VolatilityRegime, ...],
+        _normalize_literal_values(
+            raw_regimes,
+            default=DEFAULT_VOLATILITY_REGIMES,
+            supported={"low", "medium", "high"},
+            label="volatility regime",
+        ),
+    )
 
 
 def normalize_futures_alignments(
     raw_alignments: Iterable[str] | None,
 ) -> tuple[FuturesAlignment, ...]:
-    if not raw_alignments:
-        return DEFAULT_FUTURES_ALIGNMENTS
-    alignments: list[FuturesAlignment] = []
-    seen: set[str] = set()
-    for raw_alignment in raw_alignments:
-        alignment = raw_alignment.lower()
-        if alignment not in {"aligned", "conflicting", "neutral_or_unknown"}:
-            raise ValueError(f"Unsupported futures alignment {raw_alignment!r}")
-        if alignment not in seen:
-            seen.add(alignment)
-            alignments.append(alignment)  # type: ignore[arg-type]
-    return tuple(alignments)
+    return cast(
+        tuple[FuturesAlignment, ...],
+        _normalize_literal_values(
+            raw_alignments,
+            default=DEFAULT_FUTURES_ALIGNMENTS,
+            supported={"aligned", "conflicting", "neutral_or_unknown"},
+            label="futures alignment",
+        ),
+    )
 
 
 def normalize_momentum_regimes(
     raw_regimes: Iterable[str] | None,
 ) -> tuple[MomentumRegime, ...]:
-    if not raw_regimes:
-        return DEFAULT_MOMENTUM_REGIMES
-    regimes: list[MomentumRegime] = []
-    seen: set[str] = set()
-    for raw_regime in raw_regimes:
-        regime = raw_regime.lower()
-        if regime not in {"low", "medium", "high"}:
-            raise ValueError(f"Unsupported momentum regime {raw_regime!r}")
-        if regime not in seen:
-            seen.add(regime)
-            regimes.append(regime)  # type: ignore[arg-type]
-    return tuple(regimes)
+    return cast(
+        tuple[MomentumRegime, ...],
+        _normalize_literal_values(
+            raw_regimes,
+            default=DEFAULT_MOMENTUM_REGIMES,
+            supported={"low", "medium", "high"},
+            label="momentum regime",
+        ),
+    )
 
 
 def normalize_volume_regimes(
     raw_regimes: Iterable[str] | None,
 ) -> tuple[VolumeRegime, ...]:
-    if not raw_regimes:
-        return DEFAULT_VOLUME_REGIMES
-    regimes: list[VolumeRegime] = []
-    seen: set[str] = set()
-    for raw_regime in raw_regimes:
-        regime = raw_regime.lower()
-        if regime not in {"low", "normal", "high"}:
-            raise ValueError(f"Unsupported volume regime {raw_regime!r}")
-        if regime not in seen:
-            seen.add(regime)
-            regimes.append(regime)  # type: ignore[arg-type]
-    return tuple(regimes)
+    return cast(
+        tuple[VolumeRegime, ...],
+        _normalize_literal_values(
+            raw_regimes,
+            default=DEFAULT_VOLUME_REGIMES,
+            supported={"low", "normal", "high"},
+            label="volume regime",
+        ),
+    )
 
 
 def normalize_volume_directions(
     raw_directions: Iterable[str] | None,
 ) -> tuple[VolumeDirection, ...]:
-    if not raw_directions:
-        return DEFAULT_VOLUME_DIRECTIONS
-    directions: list[VolumeDirection] = []
+    return cast(
+        tuple[VolumeDirection, ...],
+        _normalize_literal_values(
+            raw_directions,
+            default=DEFAULT_VOLUME_DIRECTIONS,
+            supported={"up", "down", "neutral"},
+            label="volume direction",
+        ),
+    )
+
+
+def _normalize_literal_values(
+    raw_values: Iterable[str] | None,
+    *,
+    default: tuple[str, ...],
+    supported: set[str],
+    label: str,
+) -> tuple[str, ...]:
+    if not raw_values:
+        return default
+    values: list[str] = []
     seen: set[str] = set()
-    for raw_direction in raw_directions:
-        direction = raw_direction.lower()
-        if direction not in {"up", "down", "neutral"}:
-            raise ValueError(f"Unsupported volume direction {raw_direction!r}")
-        if direction not in seen:
-            seen.add(direction)
-            directions.append(direction)  # type: ignore[arg-type]
-    return tuple(directions)
+    for raw_value in raw_values:
+        value = raw_value.lower()
+        if value not in supported:
+            raise ValueError(f"Unsupported {label} {raw_value!r}")
+        if value not in seen:
+            seen.add(value)
+            values.append(value)
+    return tuple(values)
 
 
 def _direction_region(
@@ -1870,19 +1879,6 @@ def _bucket_zone(bucket_timezone: str) -> ZoneInfo:
         raise ValueError(f"Unsupported bucket timezone {bucket_timezone!r}") from exc
 
 
-def _full_window_slope_pct(values: Sequence[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    x_mean = (len(values) - 1) / 2.0
-    y_mean = mean(values)
-    numerator = sum((idx - x_mean) * (value - y_mean) for idx, value in enumerate(values))
-    denominator = sum((idx - x_mean) ** 2 for idx in range(len(values)))
-    if denominator == 0 or values[0] == 0:
-        return 0.0
-    slope_per_bar = numerator / denominator
-    return slope_per_bar * (len(values) - 1) / values[0]
-
-
 def _direction_from_slope(slope_pct: float, flat_threshold_pct: float) -> str:
     if slope_pct > flat_threshold_pct:
         return "up"
@@ -1896,37 +1892,6 @@ def _slope_severity(
     thresholds: tuple[float, float, float, float] | None = None,
 ) -> int:
     return slope_severity_from_slope(slope_pct, thresholds)
-
-
-def _returns(bars: Sequence[Bar]) -> list[float]:
-    output: list[float] = []
-    for previous, current in zip(bars, bars[1:]):
-        if previous.close:
-            output.append(float(current.close) / float(previous.close) - 1.0)
-    return output
-
-
-def _deltas(values: Sequence[float]) -> list[float]:
-    return [current - previous for previous, current in zip(values, values[1:])]
-
-
-def _correlation(left: Sequence[float], right: Sequence[float]) -> float:
-    count = min(len(left), len(right))
-    if count < 2:
-        return 0.0
-    x_values = [float(value) for value in left[-count:]]
-    y_values = [float(value) for value in right[-count:]]
-    x_mean = mean(x_values)
-    y_mean = mean(y_values)
-    numerator = sum(
-        (x_value - x_mean) * (y_value - y_mean)
-        for x_value, y_value in zip(x_values, y_values)
-    )
-    x_var = sum((value - x_mean) ** 2 for value in x_values)
-    y_var = sum((value - y_mean) ** 2 for value in y_values)
-    if x_var <= 0 or y_var <= 0:
-        return 0.0
-    return numerator / sqrt(x_var * y_var)
 
 
 def _volatility_regime(

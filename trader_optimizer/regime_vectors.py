@@ -11,6 +11,12 @@ from statistics import mean, pstdev
 from trader_optimizer.config import write_json
 from trader_optimizer.data import Bar, DataProfile
 from trader_optimizer.market_features import ORDERBOOK_INTEGRATION_BRANCH, index_futures_for_symbol
+from trader_optimizer.series_math import (
+    correlation as _correlation,
+    deltas as _deltas,
+    full_window_slope_pct as _full_window_slope_pct,
+    returns_from_bars as _returns,
+)
 from trader_optimizer.slope_severity import slope_severity_from_slope
 from trader_optimizer.volatility_regime import volatility_regime_from_realized
 
@@ -459,19 +465,6 @@ def _realized_volatility_pct(bars: Sequence[Bar]) -> float:
     return pstdev(returns) * sqrt(len(returns)) if returns else 0.0
 
 
-def _full_window_slope_pct(values: Sequence[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    x_mean = (len(values) - 1) / 2.0
-    y_mean = mean(values)
-    numerator = sum((idx - x_mean) * (value - y_mean) for idx, value in enumerate(values))
-    denominator = sum((idx - x_mean) ** 2 for idx in range(len(values)))
-    if denominator == 0 or values[0] == 0:
-        return 0.0
-    slope_per_bar = numerator / denominator
-    return slope_per_bar * (len(values) - 1) / values[0]
-
-
 def _direction_from_slope(slope_pct: float, flat_threshold_pct: float) -> str:
     if slope_pct > flat_threshold_pct:
         return "up"
@@ -496,18 +489,6 @@ def _volume_regime(relative_volume: float) -> str:
     return "high"
 
 
-def _returns(bars: Sequence[Bar]) -> list[float]:
-    output: list[float] = []
-    for previous, current in zip(bars, bars[1:]):
-        if previous.close:
-            output.append(float(current.close) / float(previous.close) - 1.0)
-    return output
-
-
-def _deltas(values: Sequence[float]) -> list[float]:
-    return [current - previous for previous, current in zip(values, values[1:])]
-
-
 def _aligned_returns(
     bars: Sequence[Bar],
     market_bars: Sequence[Bar],
@@ -522,25 +503,6 @@ def _aligned_returns(
         aligned_bars.append(bar)
         aligned_market_bars.append(market_bar)
     return _returns(aligned_bars), _returns(aligned_market_bars)
-
-
-def _correlation(left: Sequence[float], right: Sequence[float]) -> float:
-    count = min(len(left), len(right))
-    if count < 2:
-        return 0.0
-    x_values = [float(value) for value in left[-count:]]
-    y_values = [float(value) for value in right[-count:]]
-    x_mean = mean(x_values)
-    y_mean = mean(y_values)
-    numerator = sum(
-        (x_value - x_mean) * (y_value - y_mean)
-        for x_value, y_value in zip(x_values, y_values)
-    )
-    x_var = sum((value - x_mean) ** 2 for value in x_values)
-    y_var = sum((value - y_mean) ** 2 for value in y_values)
-    if x_var <= 0 or y_var <= 0:
-        return 0.0
-    return numerator / sqrt(x_var * y_var)
 
 
 def _beta(left: Sequence[float], right: Sequence[float]) -> float:
