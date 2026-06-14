@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -25,7 +26,12 @@ from trader_optimizer.data import (
     load_bars,
     split_train_validation,
 )
+from trader_optimizer.market_feature_sources import build_market_feature_summary_from_postgres
 from trader_optimizer.optimizer import OptimizationSettings, run_optimization
+from trader_optimizer.optuna_studies import (
+    create_or_load_study,
+    is_transient_storage_error,
+)
 from trader_optimizer.postgres import (
     PostgresSettings,
     insert_optimizer_batch_results,
@@ -49,6 +55,11 @@ from trader_optimizer.simple_strategies import (
     volatility_target_weights,
 )
 from trader_optimizer.strategy_configs import StrategyCandidate
+from trader_optimizer.tuning_profile import (
+    build_candidate_tuning_profile,
+    direction_plan_label,
+    tuning_category_labels,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +77,7 @@ class BatchSettings:
     backtester_settings: BackTesterSettings | None = None
     start_utc: str | None = None
     end_utc: str | None = None
+    strategy_budget: float | None = None
 
 
 @dataclass(frozen=True)
@@ -84,9 +96,17 @@ class BatchItemResult:
     benchmark_return_pct: float | None = None
     excess_return_pct: float | None = None
     reason: str | None = None
+    tuning_profile: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
+
+
+@dataclass(frozen=True)
+class QuantitySearchSpace:
+    lower_bound: float
+    upper_bound: float
+    fractional: bool
 
 
 def optimize_candidates(
@@ -100,6 +120,8 @@ def optimize_candidates(
             backtester_settings=prepare_backtester(settings.backtester_settings),
         )
     worker_count = _resolve_workers(settings.workers, len(candidates))
+    if worker_count > 1:
+        _precreate_optuna_studies(candidates, settings)
 
     if worker_count == 1:
         results = []
@@ -141,16 +163,71 @@ def _optimize_candidate(
     candidate: StrategyCandidate,
     settings: BatchSettings,
 ) -> BatchItemResult:
-    try:
-        if candidate.strategy_type == "ConstantStepOffset":
-            return _optimize_cso(candidate, settings)
-        if candidate.strategy_type in {"MovingAverageCross", "TechnicalSignal"}:
-            return _optimize_single_signal(candidate, settings)
-        if candidate.strategy_type == "PortfolioAllocation":
-            return _optimize_portfolio(candidate, settings)
-        return _skipped(candidate, f"Unsupported strategy_type {candidate.strategy_type}")
-    except Exception as exc:  # noqa: BLE001 - batch summaries should retain failures.
-        return _skipped(candidate, str(exc))
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            return _run_candidate_optimization(candidate, settings)
+        except Exception as exc:  # noqa: BLE001 - batch summaries should retain failures.
+            if attempt < attempts and is_transient_storage_error(exc):
+                if settings.verbose:
+                    print(
+                        f"[retry {attempt}/{attempts - 1}] {candidate.name}: {exc}",
+                    )
+                time.sleep(0.25 * attempt)
+                continue
+            return _skipped(candidate, str(exc))
+    return _skipped(candidate, "Unknown optimization failure")
+
+
+def _run_candidate_optimization(
+    candidate: StrategyCandidate,
+    settings: BatchSettings,
+) -> BatchItemResult:
+    if candidate.strategy_type == "ConstantStepOffset":
+        return _optimize_cso(candidate, settings)
+    if candidate.strategy_type in {"MovingAverageCross", "TechnicalSignal"}:
+        return _optimize_single_signal(candidate, settings)
+    if candidate.strategy_type == "PortfolioAllocation":
+        return _optimize_portfolio(candidate, settings)
+    return _skipped(candidate, f"Unsupported strategy_type {candidate.strategy_type}")
+
+
+def _precreate_optuna_studies(
+    candidates: list[StrategyCandidate],
+    settings: BatchSettings,
+) -> None:
+    for candidate in candidates:
+        study_name = _study_name_for_candidate(candidate, settings)
+        if study_name is None:
+            continue
+        create_or_load_study(
+            direction="maximize",
+            study_name=study_name,
+            storage=settings.optuna_storage_url,
+        )
+
+
+def _study_name_for_candidate(
+    candidate: StrategyCandidate,
+    settings: BatchSettings,
+) -> str | None:
+    if candidate.strategy_type == "ConstantStepOffset":
+        return f"{settings.output_dir.name}_{candidate.name}_cso"
+    if candidate.strategy_type in {"MovingAverageCross", "TechnicalSignal"}:
+        return f"{settings.output_dir.name}_{candidate.name}_simple"
+    if candidate.strategy_type == "PortfolioAllocation":
+        return f"{settings.output_dir.name}_{candidate.name}_portfolio"
+    return None
+
+
+def _required_study_name(
+    candidate: StrategyCandidate,
+    settings: BatchSettings,
+) -> str:
+    study_name = _study_name_for_candidate(candidate, settings)
+    if study_name is None:
+        raise ValueError(f"Unsupported strategy_type {candidate.strategy_type}")
+    return study_name
 
 
 def _print_candidate_start(
@@ -208,6 +285,7 @@ def write_optimization_plan(
         f"- Max bars per symbol: `{settings.max_bars}`",
         f"- Start UTC: `{settings.start_utc or 'auto'}`",
         f"- End UTC: `{settings.end_utc or 'auto'}`",
+        f"- Strategy budget: `{settings.strategy_budget or 'config default'}`",
         f"- Train fraction: `{settings.train_fraction}`",
         f"- Preferred bar size: `{settings.preferred_bar_size or 'auto'}`",
         f"- Workers: `{_resolve_workers(settings.workers, len(candidates))}`",
@@ -223,6 +301,14 @@ def write_optimization_plan(
         "- `PortfolioAllocation` QS-002 momentum factor: `momentumLookback`, `momentumLegSize`, and `maxGrossExposure`.",
         "- `PortfolioAllocation` PAIRS-001 equity pairs: `pairWindow`, `pairEntryZ`, `pairExitZ`, and `maxGrossExposure`.",
         "",
+        "## Strategy Tuning Categories",
+        "",
+        "- `direction`: expected up/down behavior plus `curveSlopeSeverity`, defaulting to `3`.",
+        "- `volatility`: individual instrument/basket volatility plus planned market-volatility regime inputs.",
+        "- `indexFuturesDirection`: ES/NQ/YM/RTY proxy direction where futures can inform the instrument.",
+        "- `optionsProbabilityMap3d`: options-trade probability map over expiry, moneyness, and time.",
+        "- `tradeVolumeOrderbook`: current bar volume plus L2 orderbook imbalance from `codex/l2-orderbook-ingestion`.",
+        "",
         "## Objective",
         "",
         "The objective blends train and validation excess return versus a buy-and-hold benchmark for the same symbol set, "
@@ -232,8 +318,8 @@ def write_optimization_plan(
         "",
         "## Strategy Coverage",
         "",
-        "| Config | Type | Variant | Symbols | Data profile | Tuned fields |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Config | Type | Variant | Symbols | Data profile | Tuned fields | Categories | Direction |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for candidate in candidates:
         lines.append(_plan_row(candidate, settings))
@@ -271,14 +357,23 @@ def _optimize_cso(
         end_utc=settings.end_utc,
         max_bars=settings.max_bars,
     )
+    market_features = build_market_feature_summary_from_postgres(
+        settings.pg_settings,
+        {symbol: window.bars},
+        preferred_bar_size=profile.bar_size,
+        start_utc=settings.start_utc,
+        end_utc=settings.end_utc,
+        max_bars=settings.max_bars,
+    )
     output_dir = settings.output_dir / candidate.name
+    study_name = _required_study_name(candidate, settings)
     artifacts = run_optimization(
         window,
         OptimizationSettings(
             trials=settings.trials,
             train_fraction=settings.train_fraction,
             output_dir=output_dir,
-            study_name=f"{settings.output_dir.name}_{candidate.name}_cso",
+            study_name=study_name,
             storage_url=settings.optuna_storage_url,
             pg_settings=settings.pg_settings,
             min_trades=2,
@@ -287,6 +382,19 @@ def _optimize_cso(
         ),
     )
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    tuning_profile = build_candidate_tuning_profile(
+        candidate,
+        tuned_fields=_tuned_fields(candidate),
+        data_profiles={symbol: profile.__dict__},
+        hyperparameters=summary.get("hyperparameters")
+        if isinstance(summary.get("hyperparameters"), dict)
+        else None,
+        strategy_budget=settings.strategy_budget,
+        market_features=market_features,
+    )
+    _write_config_tuning_profile(artifacts.config_path, tuning_profile)
+    summary["strategyTuningProfile"] = tuning_profile
+    write_json(artifacts.summary_path, summary)
     benchmark = summary.get("benchmark", {}).get("all", {})
     status, reason = _benchmark_status(benchmark)
     backtester_validation = summary.get("backtester")
@@ -323,6 +431,7 @@ def _optimize_cso(
         benchmark_return_pct=_float_or_none(benchmark.get("benchmark_return_pct")),
         excess_return_pct=_float_or_none(benchmark.get("excess_return_pct")),
         reason=reason,
+        tuning_profile=tuning_profile,
     )
 
 
@@ -346,18 +455,30 @@ def _optimize_single_signal(
         end_utc=settings.end_utc,
         max_bars=settings.max_bars,
     ).bars
+    market_features = build_market_feature_summary_from_postgres(
+        settings.pg_settings,
+        {symbol: bars},
+        preferred_bar_size=profile.bar_size,
+        start_utc=settings.start_utc,
+        end_utc=settings.end_utc,
+        max_bars=settings.max_bars,
+    )
     train_bars, validation_bars = split_train_validation(
         bars,
         settings.train_fraction,
     )
+    quantity_search_space = _quantity_search_space(
+        candidate,
+        bars,
+        settings.strategy_budget,
+    )
     output_dir = settings.output_dir / candidate.name
     output_dir.mkdir(parents=True, exist_ok=True)
-    study_name = f"{settings.output_dir.name}_{candidate.name}_simple"
-    study = optuna.create_study(
+    study_name = _required_study_name(candidate, settings)
+    study = create_or_load_study(
         direction="maximize",
         study_name=study_name,
         storage=settings.optuna_storage_url,
-        load_if_exists=True,
     )
     study.optimize(
         lambda trial: _single_signal_objective(
@@ -365,6 +486,7 @@ def _optimize_single_signal(
             train_bars,
             validation_bars,
             trial,
+            quantity_search_space,
         ),
         n_trials=settings.trials,
         show_progress_bar=False,
@@ -373,16 +495,19 @@ def _optimize_single_signal(
         candidate,
         bars,
         study.best_trial,
+        quantity_search_space,
     )
     _, train_result = _single_signal_config_and_result(
         candidate,
         train_bars,
         study.best_trial,
+        quantity_search_space,
     )
     _, validation_result = _single_signal_config_and_result(
         candidate,
         validation_bars,
         study.best_trial,
+        quantity_search_space,
     )
     train_benchmark = simulate_buy_and_hold(
         train_bars,
@@ -414,6 +539,15 @@ def _optimize_single_signal(
         "all": all_result.to_dict(),
     }
     hyperparameters = dict(study.best_trial.params)
+    tuning_profile = build_candidate_tuning_profile(
+        candidate,
+        tuned_fields=_tuned_fields(candidate),
+        data_profiles={symbol: profile.__dict__},
+        hyperparameters=hyperparameters,
+        strategy_budget=settings.strategy_budget,
+        market_features=market_features,
+    )
+    best_config["strategyTuningProfile"] = tuning_profile
     write_json(config_path, best_config)
     backtester_validation = _validate_batch_backtester(
         candidate=candidate,
@@ -447,6 +581,7 @@ def _optimize_single_signal(
             if backtester_validation is not None
             else None,
             "hyperparameters": hyperparameters,
+            "strategyTuningProfile": tuning_profile,
         },
     )
     with postgres_connection(settings.pg_settings) as conn:
@@ -500,6 +635,7 @@ def _optimize_single_signal(
             else all_result.return_pct - all_benchmark.return_pct
         ),
         reason=reason,
+        tuning_profile=tuning_profile,
     )
 
 
@@ -508,12 +644,19 @@ def _single_signal_objective(
     train_bars: list[Bar],
     validation_bars: list[Bar],
     trial: optuna.Trial,
+    quantity_search_space: QuantitySearchSpace,
 ) -> float:
-    _, train_result = _single_signal_config_and_result(candidate, train_bars, trial)
+    _, train_result = _single_signal_config_and_result(
+        candidate,
+        train_bars,
+        trial,
+        quantity_search_space,
+    )
     _, validation_result = _single_signal_config_and_result(
         candidate,
         validation_bars,
         trial,
+        quantity_search_space,
     )
     train_benchmark = simulate_buy_and_hold(
         train_bars,
@@ -569,13 +712,23 @@ def _single_signal_config_and_result(
     candidate: StrategyCandidate,
     bars: list[Bar],
     trial: optuna.Trial,
+    quantity_search_space: QuantitySearchSpace | None = None,
 ) -> tuple[dict[str, Any], SimpleResult]:
     config = dict(candidate.config)
-    quantity = float(trial.suggest_int("orderQuantity", 1, 20))
+    quantity = _suggest_order_quantity(
+        trial,
+        quantity_search_space or _quantity_search_space(candidate, bars, None),
+    )
 
     if candidate.strategy_type == "MovingAverageCross":
+        trend_mode = str(config.get("trendMode", "")).lower()
         fast = trial.suggest_int("fastWindow", 2, 30)
-        slow = trial.suggest_int("slowWindow", fast + 1, 120)
+        if trend_mode in {"matrend-002", "triple_ma", "triplema", "triple_stack"}:
+            middle = trial.suggest_int("middleWindow", fast + 1, 80)
+            slow = trial.suggest_int("slowWindow", middle + 1, 160)
+            config["middleWindow"] = middle
+        else:
+            slow = trial.suggest_int("slowWindow", fast + 1, 120)
         directions = sma_cross_directions(bars, fast, slow)
         config.update(
             {
@@ -665,15 +818,22 @@ def _optimize_portfolio(
         )
         train_symbol_bars[symbol] = train_bars
         validation_symbol_bars[symbol] = validation_bars
+    market_features = build_market_feature_summary_from_postgres(
+        settings.pg_settings,
+        symbol_bars,
+        preferred_bar_size=settings.preferred_bar_size,
+        start_utc=settings.start_utc,
+        end_utc=settings.end_utc,
+        max_bars=settings.max_bars,
+    )
 
     output_dir = settings.output_dir / candidate.name
     output_dir.mkdir(parents=True, exist_ok=True)
-    study_name = f"{settings.output_dir.name}_{candidate.name}_portfolio"
-    study = optuna.create_study(
+    study_name = _required_study_name(candidate, settings)
+    study = create_or_load_study(
         direction="maximize",
         study_name=study_name,
         storage=settings.optuna_storage_url,
-        load_if_exists=True,
     )
     study.optimize(
         lambda trial: _portfolio_objective(
@@ -681,6 +841,7 @@ def _optimize_portfolio(
             train_symbol_bars,
             validation_symbol_bars,
             trial,
+            settings.strategy_budget,
         ),
         n_trials=settings.trials,
         show_progress_bar=False,
@@ -689,16 +850,19 @@ def _optimize_portfolio(
         candidate,
         symbol_bars,
         study.best_trial,
+        settings.strategy_budget,
     )
     _, train_result = _portfolio_config_and_result(
         candidate,
         train_symbol_bars,
         study.best_trial,
+        settings.strategy_budget,
     )
     _, validation_result = _portfolio_config_and_result(
         candidate,
         validation_symbol_bars,
         study.best_trial,
+        settings.strategy_budget,
     )
     train_benchmark = simulate_equal_weight_buy_and_hold(
         train_symbol_bars,
@@ -729,6 +893,15 @@ def _optimize_portfolio(
         "all": all_result.to_dict(),
     }
     hyperparameters = dict(study.best_trial.params)
+    tuning_profile = build_candidate_tuning_profile(
+        candidate,
+        tuned_fields=_tuned_fields(candidate),
+        data_profiles=profiles,
+        hyperparameters=hyperparameters,
+        strategy_budget=settings.strategy_budget,
+        market_features=market_features,
+    )
+    best_config["strategyTuningProfile"] = tuning_profile
     write_json(config_path, best_config)
     backtester_validation = _validate_batch_backtester(
         candidate=candidate,
@@ -757,6 +930,7 @@ def _optimize_portfolio(
             if backtester_validation is not None
             else None,
             "hyperparameters": hyperparameters,
+            "strategyTuningProfile": tuning_profile,
         },
     )
     with postgres_connection(settings.pg_settings) as conn:
@@ -810,6 +984,7 @@ def _optimize_portfolio(
             else all_result.return_pct - all_benchmark.return_pct
         ),
         reason=reason,
+        tuning_profile=tuning_profile,
     )
 
 
@@ -818,16 +993,19 @@ def _portfolio_objective(
     train_symbol_bars: dict[str, list[Bar]],
     validation_symbol_bars: dict[str, list[Bar]],
     trial: optuna.Trial,
+    strategy_budget: float | None,
 ) -> float:
     _, train_result = _portfolio_config_and_result(
         candidate,
         train_symbol_bars,
         trial,
+        strategy_budget,
     )
     _, validation_result = _portfolio_config_and_result(
         candidate,
         validation_symbol_bars,
         trial,
+        strategy_budget,
     )
     train_benchmark = simulate_equal_weight_buy_and_hold(
         train_symbol_bars,
@@ -882,10 +1060,13 @@ def _portfolio_config_and_result(
     candidate: StrategyCandidate,
     symbol_bars: dict[str, list[Bar]],
     trial: optuna.Trial,
+    strategy_budget: float | None = None,
 ) -> tuple[dict[str, Any], SimpleResult]:
     config = dict(candidate.config)
     allocation_type = str(config.get("allocation_type", "")).upper()
-    notional = float(config.get("portfolioNotional", 10000.0))
+    notional = float(strategy_budget or config.get("portfolioNotional", 10000.0))
+    if strategy_budget is not None:
+        config["portfolioNotional"] = notional
     max_gross = trial.suggest_float("maxGrossExposure", 0.25, 2.0)
     if allocation_type == "QS-001":
         target_vol = trial.suggest_float("targetVolatility", 0.03, 0.50)
@@ -1029,6 +1210,97 @@ def _float_or_none(value: object) -> float | None:
         return None
 
 
+def _quantity_upper_bound(bars: list[Bar], strategy_budget: float | None) -> int:
+    if strategy_budget is None:
+        return 20
+    if not bars:
+        return 1
+    price = max(float(bars[0].close), 1.0)
+    return max(1, int(strategy_budget // price))
+
+
+def _quantity_search_space(
+    candidate: StrategyCandidate,
+    bars: list[Bar],
+    strategy_budget: float | None,
+) -> QuantitySearchSpace:
+    if strategy_budget is None:
+        return QuantitySearchSpace(lower_bound=1.0, upper_bound=20.0, fractional=False)
+    if not bars:
+        return QuantitySearchSpace(lower_bound=1.0, upper_bound=1.0, fractional=False)
+
+    price = max(float(bars[0].close), 1.0)
+    budget_quantity = max(float(strategy_budget) / price, 1e-9)
+    if _allows_fractional_quantity(candidate.config):
+        lower_bound = min(budget_quantity, max(1e-6, budget_quantity * 0.01))
+        return QuantitySearchSpace(
+            lower_bound=lower_bound,
+            upper_bound=budget_quantity,
+            fractional=True,
+        )
+
+    return QuantitySearchSpace(
+        lower_bound=1.0,
+        upper_bound=float(max(1, int(budget_quantity))),
+        fractional=False,
+    )
+
+
+def _suggest_order_quantity(
+    trial: optuna.Trial,
+    search_space: QuantitySearchSpace,
+) -> float:
+    if search_space.fractional:
+        if search_space.lower_bound == search_space.upper_bound:
+            return float(search_space.upper_bound)
+        return float(
+            trial.suggest_float(
+                "orderQuantity",
+                search_space.lower_bound,
+                search_space.upper_bound,
+                log=True,
+            )
+        )
+    return float(
+        trial.suggest_int(
+            "orderQuantity",
+            int(search_space.lower_bound),
+            int(search_space.upper_bound),
+        )
+    )
+
+
+def _allows_fractional_quantity(config: dict[str, Any]) -> bool:
+    if bool(config.get("allowFractionalQuantity")):
+        return True
+
+    contracts: list[Any] = []
+    if isinstance(config.get("contracts"), list):
+        contracts.extend(config["contracts"])
+    contracts.extend(
+        contract
+        for contract in (config.get("price_contract"), config.get("contract"))
+        if isinstance(contract, dict)
+    )
+    return any(
+        isinstance(contract, dict)
+        and str(contract.get("secType") or contract.get("sec_type") or "").upper()
+        == "CRYPTO"
+        for contract in contracts
+    )
+
+
+def _write_config_tuning_profile(
+    config_path: Path,
+    tuning_profile: dict[str, object],
+) -> None:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        return
+    config["strategyTuningProfile"] = tuning_profile
+    write_json(config_path, config)
+
+
 def _skipped(candidate: StrategyCandidate, reason: str) -> BatchItemResult:
     return BatchItemResult(
         name=candidate.name,
@@ -1038,6 +1310,10 @@ def _skipped(candidate: StrategyCandidate, reason: str) -> BatchItemResult:
         source_config=str(candidate.path),
         status="skipped",
         reason=reason,
+        tuning_profile=build_candidate_tuning_profile(
+            candidate,
+            tuned_fields=_tuned_fields(candidate),
+        ),
     )
 
 
@@ -1048,7 +1324,10 @@ def _write_batch_summary(
     output_dir = settings.output_dir
     write_json(
         output_dir / "batch_summary.json",
-        {"results": [result.to_dict() for result in results]},
+        {
+            "tuning_profile_schema": "strategy_tuning_profile.v1",
+            "results": [result.to_dict() for result in results],
+        },
     )
     with postgres_connection(settings.pg_settings) as conn:
         insert_optimizer_batch_results(conn, output_dir.name, results)
@@ -1082,6 +1361,7 @@ def _export_best_configs(
                 "exported_config": str(exported),
                 "run_config": result.best_config,
                 "summary": result.summary,
+                "tuning_profile": result.tuning_profile,
             }
         )
     write_json(export_dir / "index.json", {"configs": index})
@@ -1090,6 +1370,12 @@ def _export_best_configs(
 def _plan_row(candidate: StrategyCandidate, settings: BatchSettings) -> str:
     symbols = ", ".join(candidate.symbols)
     tuned_fields = ", ".join(_tuned_fields(candidate))
+    tuning_profile = build_candidate_tuning_profile(
+        candidate,
+        tuned_fields=_tuned_fields(candidate),
+    )
+    categories = ", ".join(tuning_category_labels(tuning_profile))
+    direction = direction_plan_label(tuning_profile)
     try:
         profiles = []
         for symbol in candidate.symbols:
@@ -1106,7 +1392,7 @@ def _plan_row(candidate: StrategyCandidate, settings: BatchSettings) -> str:
         data_profile = f"unavailable: {exc}"
     return (
         f"| `{candidate.name}` | `{candidate.strategy_type}` | `{candidate.variant}` | "
-        f"{symbols} | {data_profile} | {tuned_fields} |"
+        f"{symbols} | {data_profile} | {tuned_fields} | {categories} | {direction} |"
     )
 
 
